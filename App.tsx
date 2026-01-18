@@ -2,11 +2,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import Layout from './components/Layout';
-import { MemoryGame, ClickerGame } from './components/Games';
-import { StorageService } from './services/storage';
-import { UserProfile, Task, Coupon, WithdrawalRequest, AppSettings } from './types';
-import { ADMIN_EMAIL, ADMIN_PASSWORD, CATEGORIES } from './constants';
+import Layout from './components/Layout.tsx';
+import { MemoryGame, ClickerGame } from './components/Games.tsx';
+import { StorageService } from './services/storage.ts';
+import { UserProfile, Task, Coupon, WithdrawalRequest, AppSettings } from './types.ts';
+import { ADMIN_EMAIL, ADMIN_PASSWORD, CATEGORIES } from './constants.ts';
 
 // Ad Component to safely render admin-provided ad codes
 const AdDisplay: React.FC<{ html?: string, className?: string }> = ({ html, className }) => {

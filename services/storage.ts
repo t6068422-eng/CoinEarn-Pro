@@ -1,6 +1,6 @@
 
-import { UserProfile, Task, Coupon, WithdrawalRequest, AppSettings } from '../types';
-import { INITIAL_TASKS, INITIAL_SETTINGS } from '../constants';
+import { UserProfile, Task, Coupon, WithdrawalRequest, AppSettings } from '../types.ts';
+import { INITIAL_TASKS, INITIAL_SETTINGS } from '../constants.ts';
 
 const KEYS = {
   USERS: 'ce_users',
