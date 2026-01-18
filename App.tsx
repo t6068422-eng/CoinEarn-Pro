@@ -40,6 +40,7 @@ const App: React.FC = () => {
   const [ip, setIp] = useState<string>('');
   const [isIncognito, setIsIncognito] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState(false);
   
   // Data State
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -102,13 +103,11 @@ const App: React.FC = () => {
           // Handle Referral Logic
           if (refCodeFromUrl) {
             const referrer = allUsers.find(u => u.referralCode === refCodeFromUrl);
-            // Referrer must exist and not be the same person (IP)
             if (referrer && referrer.ip !== data.ip) {
               referrer.coins += settings.referralBonusAmount;
               referrer.totalReferrals += 1;
               user.referredBy = referrer.ip;
               
-              // Update referrer in the list
               const rIdx = allUsers.findIndex(u => u.ip === referrer.ip);
               allUsers[rIdx] = referrer;
             }
@@ -124,6 +123,11 @@ const App: React.FC = () => {
         if (!StorageService.isWelcomed(data.ip)) {
           setShowWelcome(true);
           StorageService.setWelcomed(data.ip);
+        }
+
+        // Cleanup URL query params for a cleaner look after processing referral
+        if (refCodeFromUrl) {
+          window.history.replaceState({}, document.title, window.location.pathname);
         }
       })
       .catch(() => {
@@ -156,7 +160,7 @@ const App: React.FC = () => {
     setWithdrawals(StorageService.getWithdrawals());
   }, []);
 
-  // Sync state to storage whenever important data changes
+  // Sync state to storage
   useEffect(() => {
     if (currentUser) {
       const allUsers = StorageService.getUsers();
@@ -337,6 +341,12 @@ const App: React.FC = () => {
     }
   };
 
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(referralLink);
+    setCopyFeedback(true);
+    setTimeout(() => setCopyFeedback(false), 2000);
+  };
+
   // Render Logic
   if (isIncognito) {
     return (
@@ -435,7 +445,6 @@ const App: React.FC = () => {
 
       {view === 'user' && (
         <div className="space-y-8">
-          {/* Main Page Ad */}
           <AdDisplay html={settings.adCodes.main} />
 
           {/* Main User Navigation */}
@@ -617,27 +626,43 @@ const App: React.FC = () => {
               <div className="text-center">
                 <div className="text-6xl mb-4">🤝</div>
                 <h2 className="text-3xl font-bold mb-2">Referral Program</h2>
-                <p className="text-slate-400">Invite your friends and earn <span className="text-yellow-500 font-bold">🪙 {settings.referralBonusAmount}</span> for each unique IP.</p>
+                <p className="text-slate-400">Invite friends and earn <span className="text-yellow-500 font-bold">🪙 {settings.referralBonusAmount}</span> per join.</p>
               </div>
 
               <div className="glass p-8 rounded-3xl space-y-6">
                 <div>
-                  <label className="block text-sm font-medium text-slate-500 mb-2">Your Shareable Referral Link</label>
-                  <div className="flex gap-2">
-                    <input 
-                      readOnly
-                      value={referralLink}
-                      className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 font-mono text-sm text-indigo-400"
-                    />
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(referralLink);
-                        alert('Link copied to clipboard!');
-                      }}
-                      className="px-6 bg-slate-800 hover:bg-slate-700 rounded-xl font-bold transition-colors whitespace-nowrap"
-                    >
-                      COPY LINK
-                    </button>
+                  <label className="block text-sm font-medium text-slate-500 mb-2">Share Your Unique Link</label>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex gap-2">
+                      <input 
+                        readOnly
+                        value={referralLink}
+                        className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 font-mono text-xs text-indigo-400 overflow-hidden text-ellipsis"
+                      />
+                      <button 
+                        onClick={handleCopyLink}
+                        className={`px-6 rounded-xl font-bold transition-all whitespace-nowrap ${copyFeedback ? 'bg-emerald-600 text-white' : 'bg-slate-800 hover:bg-slate-700'}`}
+                      >
+                        {copyFeedback ? 'COPIED!' : 'COPY'}
+                      </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3 mt-2">
+                      <a 
+                        href={`https://twitter.com/intent/tweet?text=Join%20CoinEarn%20Pro%20and%20start%20earning%20coins!%20${encodeURIComponent(referralLink)}`}
+                        target="_blank"
+                        className="flex items-center justify-center gap-2 py-3 bg-[#1DA1F2] hover:bg-[#1A91DA] rounded-xl font-bold text-sm transition-colors"
+                      >
+                        Share on Twitter
+                      </a>
+                      <a 
+                        href={`https://t.me/share/url?url=${encodeURIComponent(referralLink)}&text=Join%20CoinEarn%20Pro%20and%20start%20earning%20coins!`}
+                        target="_blank"
+                        className="flex items-center justify-center gap-2 py-3 bg-[#0088cc] hover:bg-[#0077b5] rounded-xl font-bold text-sm transition-colors"
+                      >
+                        Share Telegram
+                      </a>
+                    </div>
                   </div>
                 </div>
 
@@ -647,7 +672,7 @@ const App: React.FC = () => {
                     <div className="text-2xl font-bold">{currentUser?.totalReferrals || 0}</div>
                   </div>
                   <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
-                    <div className="text-slate-500 text-xs mb-1 uppercase font-bold">Earned From Refs</div>
+                    <div className="text-slate-500 text-xs mb-1 uppercase font-bold">Earned Coins</div>
                     <div className="text-2xl font-bold text-yellow-500">🪙 {(currentUser?.totalReferrals || 0) * settings.referralBonusAmount}</div>
                   </div>
                 </div>
@@ -751,7 +776,7 @@ const App: React.FC = () => {
                     { label: 'Total Users', value: users.length, color: 'indigo' },
                     { label: 'Total Coins Issued', value: users.reduce((acc, u) => acc + u.coins, 0), color: 'yellow' },
                     { label: 'Pending Withdrawals', value: withdrawals.filter(w => w.status === 'pending').length, color: 'orange' },
-                    { label: 'Total Completed Tasks', value: users.reduce((acc, u) => acc + u.tasksCompleted.length, 0), color: 'emerald' },
+                    { label: 'Total Tasks', value: users.reduce((acc, u) => acc + u.tasksCompleted.length, 0), color: 'emerald' },
                   ].map((stat, i) => (
                     <div key={i} className="glass p-6 rounded-3xl border-slate-800">
                       <div className="text-slate-500 text-sm font-bold mb-1 uppercase tracking-wider">{stat.label}</div>
@@ -909,10 +934,9 @@ const App: React.FC = () => {
 
             {activeAdminTab === 'coupons' && (
               <div className="space-y-6">
-                <h2 className="text-2xl font-bold">Full Coupon Management</h2>
-                
+                <h2 className="text-2xl font-bold">Coupon Management</h2>
                 <div className="glass p-8 rounded-3xl space-y-4">
-                  <h3 className="text-lg font-bold">Create Custom Coupon</h3>
+                  <h3 className="text-lg font-bold">Create Coupon</h3>
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     const fd = new FormData(e.currentTarget);
@@ -928,25 +952,24 @@ const App: React.FC = () => {
                     e.currentTarget.reset();
                   }} className="grid md:grid-cols-5 gap-4 items-end">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">CODE</label>
-                      <input name="code" required placeholder="WELCOME100" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
+                      <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Code</label>
+                      <input name="code" required className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">REWARD (COINS)</label>
-                      <input name="reward" type="number" required placeholder="100" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
+                      <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Coins</label>
+                      <input name="reward" type="number" required className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">USAGE LIMIT</label>
-                      <input name="limit" type="number" required placeholder="50" className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
+                      <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Limit</label>
+                      <input name="limit" type="number" required className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 mb-1">EXPIRY DATE</label>
+                      <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Expiry</label>
                       <input name="expiry" type="date" required className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-sm" />
                     </div>
                     <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 h-[38px] rounded-lg font-bold text-sm">CREATE</button>
                   </form>
                 </div>
-
                 <div className="glass rounded-3xl overflow-hidden">
                   <table className="w-full text-left text-sm">
                     <thead className="bg-slate-800/50 text-slate-400 uppercase text-[10px] font-bold">
@@ -962,9 +985,9 @@ const App: React.FC = () => {
                       {coupons.map((c) => (
                         <tr key={c.id}>
                           <td className="px-6 py-4 font-mono font-bold text-indigo-400">{c.code}</td>
-                          <td className="px-6 py-4">🪙 {c.reward}</td>
+                          <td className="px-6 py-4 font-bold text-yellow-500">🪙 {c.reward}</td>
                           <td className="px-6 py-4">{c.usedCount} / {c.usageLimit}</td>
-                          <td className="px-6 py-4">{new Date(c.expiryDate).toLocaleDateString()}</td>
+                          <td className="px-6 py-4 text-xs">{new Date(c.expiryDate).toLocaleDateString()}</td>
                           <td className="px-6 py-4 text-right">
                              <button onClick={() => saveCoupons(coupons.filter(x => x.id !== c.id))} className="text-red-500 hover:text-red-300 font-bold">DELETE</button>
                           </td>
@@ -972,9 +995,6 @@ const App: React.FC = () => {
                       ))}
                     </tbody>
                   </table>
-                </div>
-                <div className="flex justify-end">
-                    <button onClick={() => { StorageService.setCoupons(coupons); alert('Saved!'); }} className="px-10 py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold">SAVE ALL COUPONS</button>
                 </div>
               </div>
             )}
@@ -998,7 +1018,7 @@ const App: React.FC = () => {
                         <tr key={req.id}>
                           <td className="px-6 py-4 font-mono text-sm">{req.ip}</td>
                           <td className="px-6 py-4 font-bold text-yellow-500">🪙 {req.amount}</td>
-                          <td className="px-6 py-4 text-xs font-mono">{req.walletAddress}</td>
+                          <td className="px-6 py-4 text-xs font-mono truncate max-w-[150px]">{req.walletAddress}</td>
                           <td className="px-6 py-4"><span className={`text-[10px] px-2 py-1 rounded-full font-bold uppercase border ${req.status === 'pending' ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : req.status === 'approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>{req.status}</span></td>
                           <td className="px-6 py-4 text-right">
                             {req.status === 'pending' && (
@@ -1022,7 +1042,7 @@ const App: React.FC = () => {
                 <div className="glass p-8 rounded-3xl space-y-6">
                   <div className="grid md:grid-cols-2 gap-6">
                     <div>
-                      <label className="block text-sm font-medium text-slate-500 mb-2">Daily Bonus Amount</label>
+                      <label className="block text-sm font-medium text-slate-500 mb-2">Daily Bonus</label>
                       <input type="number" value={settings.dailyBonusAmount} onChange={(e) => saveSettings({ ...settings, dailyBonusAmount: parseInt(e.target.value) })} className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3" />
                     </div>
                     <div>
@@ -1030,23 +1050,23 @@ const App: React.FC = () => {
                       <input type="number" value={settings.referralBonusAmount} onChange={(e) => saveSettings({ ...settings, referralBonusAmount: parseInt(e.target.value) })} className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3" />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-500 mb-2">Minimum Withdrawal</label>
+                      <label className="block text-sm font-medium text-slate-500 mb-2">Min Withdrawal</label>
                       <input type="number" value={settings.minWithdrawal} onChange={(e) => saveSettings({ ...settings, minWithdrawal: parseInt(e.target.value) })} className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3" />
                     </div>
                     <div className="flex items-end pb-1">
                       <label className="flex items-center gap-3 cursor-pointer bg-slate-900 p-3 rounded-xl border border-slate-800 w-full">
                         <input type="checkbox" checked={settings.isWithdrawalEnabled} onChange={(e) => saveSettings({ ...settings, isWithdrawalEnabled: e.target.checked })} className="w-5 h-5 accent-indigo-500" />
-                        <span className="text-sm font-bold">Enable Withdrawals</span>
+                        <span className="text-sm font-bold">Withdrawals ON</span>
                       </label>
                     </div>
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-500 mb-4 uppercase tracking-widest">Ad Code Management</h3>
+                    <h3 className="text-sm font-bold text-slate-500 mb-4 uppercase tracking-widest">Ad Management</h3>
                     <div className="space-y-4">
                       {['main', 'tasks', 'games', 'daily'].map(area => (
                         <div key={area}>
-                          <label className="block text-xs font-bold text-slate-600 mb-1 uppercase">{area} Section Ad HTML / Script</label>
-                          <textarea placeholder="Paste ad code here..." rows={3} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono" value={settings.adCodes[area]} onChange={(e) => saveSettings({ ...settings, adCodes: { ...settings.adCodes, [area]: e.target.value } })} />
+                          <label className="block text-xs font-bold text-slate-600 mb-1 uppercase">{area} Area HTML</label>
+                          <textarea placeholder="Ad script code..." rows={3} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono" value={settings.adCodes[area]} onChange={(e) => saveSettings({ ...settings, adCodes: { ...settings.adCodes, [area]: e.target.value } })} />
                         </div>
                       ))}
                     </div>
