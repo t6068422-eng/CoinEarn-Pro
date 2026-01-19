@@ -1,6 +1,4 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
 import Layout from './components/Layout';
 import { MemoryGame, ClickerGame } from './components/Games';
 import { StorageService } from './services/storage';
@@ -11,10 +9,14 @@ const AdDisplay: React.FC<{ html?: string, className?: string }> = ({ html, clas
   const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (html && containerRef.current) {
-      containerRef.current.innerHTML = '';
-      const range = document.createRange();
-      const fragment = range.createContextualFragment(html);
-      containerRef.current.appendChild(fragment);
+      try {
+        containerRef.current.innerHTML = '';
+        const range = document.createRange();
+        const fragment = range.createContextualFragment(html);
+        containerRef.current.appendChild(fragment);
+      } catch (err) {
+        console.error("Ad code injection failed", err);
+      }
     }
   }, [html]);
   if (!html || html.trim() === '') return null;
@@ -53,6 +55,7 @@ const App: React.FC = () => {
   }, [currentUser?.referralCode]);
 
   useEffect(() => {
+    // Detect incognito
     if ('storage' in navigator && 'estimate' in navigator.storage) {
       navigator.storage.estimate().then(estimate => {
         if (estimate.quota && estimate.quota < 120000000) {
@@ -141,18 +144,7 @@ const App: React.FC = () => {
     setWithdrawals(StorageService.getWithdrawals());
   }, []);
 
-  useEffect(() => {
-    if (currentUser) {
-      const allUsers = StorageService.getUsers();
-      const idx = allUsers.findIndex(u => u.ip === currentUser.ip);
-      if (idx !== -1) {
-        allUsers[idx] = currentUser;
-        StorageService.setUsers(allUsers);
-        setUsers(allUsers);
-      }
-    }
-  }, [currentUser]);
-
+  // Timer logic for tasks
   useEffect(() => {
     let interval: any;
     if (isTaskPending && taskTimer > 0) {
@@ -189,13 +181,23 @@ const App: React.FC = () => {
     if (!isTaskPending || !currentUser) return;
     const task = tasks.find(t => t.id === isTaskPending);
     if (!task) return;
-    setCurrentUser(prev => prev ? ({
-      ...prev,
-      coins: prev.coins + task.reward,
-      tasksCompleted: [...prev.tasksCompleted, task.id]
-    }) : null);
+    const updatedUser = {
+      ...currentUser,
+      coins: currentUser.coins + task.reward,
+      tasksCompleted: [...currentUser.tasksCompleted, task.id]
+    };
+    setCurrentUser(updatedUser);
     setIsTaskPending(null);
     setTaskTimer(0);
+    
+    // Sync to storage
+    const allUsers = StorageService.getUsers();
+    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
+    if (idx !== -1) {
+      allUsers[idx] = updatedUser;
+      StorageService.setUsers(allUsers);
+      setUsers(allUsers);
+    }
     alert(`Success! ${task.reward} coins added.`);
   };
 
@@ -218,12 +220,26 @@ const App: React.FC = () => {
       alert('Coupon usage limit reached');
       return;
     }
-    setCurrentUser(prev => prev ? ({
-      ...prev,
-      coins: prev.coins + coupon.reward,
-      couponsClaimed: [...prev.couponsClaimed, coupon.id]
-    }) : null);
-    setCoupons(prev => prev.map(c => c.id === coupon.id ? { ...c, usedCount: c.usedCount + 1 } : c));
+
+    const updatedUser = {
+      ...currentUser,
+      coins: currentUser.coins + coupon.reward,
+      couponsClaimed: [...currentUser.couponsClaimed, coupon.id]
+    };
+    setCurrentUser(updatedUser);
+
+    const updatedCoupons = coupons.map(c => c.id === coupon.id ? { ...c, usedCount: c.usedCount + 1 } : c);
+    setCoupons(updatedCoupons);
+    StorageService.setCoupons(updatedCoupons);
+
+    // Sync user
+    const allUsers = StorageService.getUsers();
+    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
+    if (idx !== -1) {
+      allUsers[idx] = updatedUser;
+      StorageService.setUsers(allUsers);
+      setUsers(allUsers);
+    }
     alert(`Success! ${coupon.reward} coins added.`);
   };
 
@@ -234,11 +250,21 @@ const App: React.FC = () => {
       alert('Bonus already claimed today');
       return;
     }
-    setCurrentUser(prev => prev ? ({
-      ...prev,
-      coins: prev.coins + settings.dailyBonusAmount,
+    const updatedUser = {
+      ...currentUser,
+      coins: currentUser.coins + settings.dailyBonusAmount,
       lastDailyBonus: today
-    }) : null);
+    };
+    setCurrentUser(updatedUser);
+    
+    // Sync
+    const allUsers = StorageService.getUsers();
+    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
+    if (idx !== -1) {
+      allUsers[idx] = updatedUser;
+      StorageService.setUsers(allUsers);
+      setUsers(allUsers);
+    }
     alert(`Daily bonus of ${settings.dailyBonusAmount} coins claimed!`);
   };
 
@@ -260,10 +286,21 @@ const App: React.FC = () => {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    const updated = [...withdrawals, newRequest];
-    setWithdrawals(updated);
-    setCurrentUser(prev => prev ? ({ ...prev, coins: prev.coins - amount }) : null);
-    StorageService.setWithdrawals(updated);
+    const updatedWd = [...withdrawals, newRequest];
+    setWithdrawals(updatedWd);
+    StorageService.setWithdrawals(updatedWd);
+
+    const updatedUser = { ...currentUser, coins: currentUser.coins - amount };
+    setCurrentUser(updatedUser);
+    
+    // Sync
+    const allUsers = StorageService.getUsers();
+    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
+    if (idx !== -1) {
+      allUsers[idx] = updatedUser;
+      StorageService.setUsers(allUsers);
+      setUsers(allUsers);
+    }
     alert('Withdrawal request submitted!');
   };
 
@@ -281,7 +318,7 @@ const App: React.FC = () => {
   };
 
   const updateWithdrawalStatus = (id: string, status: 'approved' | 'rejected') => {
-    const updated = withdrawals.map(w => {
+    const updatedWd = withdrawals.map(w => {
       if (w.id === id) {
         if (status === 'rejected') {
           const allUsers = StorageService.getUsers();
@@ -299,8 +336,8 @@ const App: React.FC = () => {
       }
       return w;
     });
-    setWithdrawals(updated);
-    StorageService.setWithdrawals(updated);
+    setWithdrawals(updatedWd);
+    StorageService.setWithdrawals(updatedWd);
   };
 
   const blockUser = (ipToBlock: string) => {
@@ -365,8 +402,18 @@ const App: React.FC = () => {
           onClose={() => setActiveGame(null)} 
           onComplete={(score, time) => {
             const reward = 20 + Math.floor(time / 10);
-            setCurrentUser(p => p ? ({ ...p, coins: p.coins + reward }) : null);
+            const updatedUser = { ...currentUser!, coins: currentUser!.coins + reward };
+            setCurrentUser(updatedUser);
+            // Sync
+            const allUsers = StorageService.getUsers();
+            const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
+            if (idx !== -1) {
+              allUsers[idx] = updatedUser;
+              StorageService.setUsers(allUsers);
+              setUsers(allUsers);
+            }
             setActiveGame(null);
+            alert(`You matched them all! Earned ${reward} coins!`);
           }}
           gameType="memory"
         />
@@ -376,8 +423,18 @@ const App: React.FC = () => {
           onClose={() => setActiveGame(null)} 
           onComplete={(score) => {
             const reward = Math.min(score, 50);
-            setCurrentUser(p => p ? ({ ...p, coins: p.coins + reward }) : null);
+            const updatedUser = { ...currentUser!, coins: currentUser!.coins + reward };
+            setCurrentUser(updatedUser);
+             // Sync
+             const allUsers = StorageService.getUsers();
+             const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
+             if (idx !== -1) {
+               allUsers[idx] = updatedUser;
+               StorageService.setUsers(allUsers);
+               setUsers(allUsers);
+             }
             setActiveGame(null);
+            alert(`Fast clicking! Earned ${reward} coins!`);
           }}
           gameType="clicker"
         />
@@ -413,10 +470,12 @@ const App: React.FC = () => {
               <AdDisplay html={settings.adCodes.tasks} />
               <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
                 <h2 className="text-2xl font-bold">Available Tasks</h2>
-                <input type="text" placeholder="Search tasks..." className="bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
+                <input type="text" placeholder="Search tasks..." className="bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2 w-full md:w-auto" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
               </div>
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {tasks.filter(t => t.isActive && (t.title.toLowerCase().includes(taskSearch.toLowerCase()) || t.category.toLowerCase().includes(taskSearch.toLowerCase()))).map(task => {
+                {tasks.filter(t => t.isActive && (t.title.toLowerCase().includes(taskSearch.toLowerCase()) || t.category.toLowerCase().includes(taskSearch.toLowerCase()))).length === 0 ? (
+                  <div className="col-span-full py-20 text-center text-slate-500">No tasks available right now.</div>
+                ) : tasks.filter(t => t.isActive && (t.title.toLowerCase().includes(taskSearch.toLowerCase()) || t.category.toLowerCase().includes(taskSearch.toLowerCase()))).map(task => {
                   const isCompleted = currentUser?.tasksCompleted.includes(task.id);
                   const isPending = isTaskPending === task.id;
                   return (
@@ -433,7 +492,7 @@ const App: React.FC = () => {
                         <button 
                           onClick={() => isPending ? finalizeTask() : claimTask(task.id)}
                           disabled={isPending && taskTimer > 0}
-                          className={`w-full py-3 rounded-xl font-bold ${isPending ? (taskTimer > 0 ? 'bg-slate-700' : 'bg-emerald-600') : 'bg-indigo-600'}`}
+                          className={`w-full py-3 rounded-xl font-bold ${isPending ? (taskTimer > 0 ? 'bg-slate-700' : 'bg-emerald-600') : 'bg-indigo-600 shadow-lg shadow-indigo-600/20'}`}
                         >
                           {isPending ? (taskTimer > 0 ? `Wait ${taskTimer}s...` : 'CLAIM REWARD') : 'COMPLETE TASK'}
                         </button>
@@ -449,13 +508,13 @@ const App: React.FC = () => {
             <div className="space-y-6">
               <AdDisplay html={settings.adCodes.games} />
               <div className="grid md:grid-cols-2 gap-8">
-                <div className="glass rounded-3xl p-8 text-center">
+                <div className="glass rounded-3xl p-8 text-center card-3d">
                   <div className="text-6xl mb-4">🧠</div>
                   <h3 className="text-2xl font-bold mb-2">Memory Match</h3>
                   <p className="text-slate-400 mb-6">Match cards to win instant coins.</p>
                   <button onClick={() => setActiveGame('memory')} className="w-full py-4 bg-indigo-600 rounded-2xl font-bold">PLAY NOW</button>
                 </div>
-                <div className="glass rounded-3xl p-8 text-center">
+                <div className="glass rounded-3xl p-8 text-center card-3d">
                   <div className="text-6xl mb-4">🖱️</div>
                   <h3 className="text-2xl font-bold mb-2">Coin Clicker</h3>
                   <p className="text-slate-400 mb-6">Click fast to earn coins.</p>
@@ -467,15 +526,16 @@ const App: React.FC = () => {
 
           {activeTab === 'coupons' && (
             <div className="max-w-xl mx-auto py-10">
-              <div className="glass p-8 rounded-3xl">
+              <div className="glass p-8 rounded-3xl shadow-xl border border-slate-700">
+                <h2 className="text-2xl font-bold mb-6 text-center">Redeem Coupon</h2>
                 <form onSubmit={(e) => {
                   e.preventDefault();
                   const code = new FormData(e.currentTarget).get('code') as string;
                   claimCoupon(code);
                   e.currentTarget.reset();
                 }} className="space-y-4">
-                  <input name="code" required placeholder="Enter Coupon Code" className="w-full bg-slate-900 rounded-2xl p-5 text-center text-xl font-mono" />
-                  <button type="submit" className="w-full py-4 bg-indigo-600 rounded-2xl font-bold text-lg">REDEEM</button>
+                  <input name="code" required placeholder="Enter Coupon Code" className="w-full bg-slate-900 rounded-2xl p-5 text-center text-xl font-mono border border-slate-800" />
+                  <button type="submit" className="w-full py-4 bg-indigo-600 rounded-2xl font-bold text-lg hover:bg-indigo-500 transition-colors">REDEEM</button>
                 </form>
               </div>
             </div>
@@ -484,12 +544,14 @@ const App: React.FC = () => {
           {activeTab === 'bonus' && (
             <div className="max-w-xl mx-auto py-10 text-center">
               <AdDisplay html={settings.adCodes.daily} />
-              <div className="glass p-10 rounded-3xl">
+              <div className="glass p-10 rounded-3xl shadow-xl border border-slate-700">
+                <div className="text-6xl mb-4">🎁</div>
+                <h2 className="text-2xl font-bold mb-2">Daily Bonus</h2>
                 <div className="text-4xl font-black text-yellow-500 mb-6">🪙 {settings.dailyBonusAmount}</div>
                 <button 
                   onClick={claimDailyBonus}
                   disabled={currentUser?.lastDailyBonus === new Date().toDateString()}
-                  className="w-full py-5 bg-indigo-600 disabled:bg-slate-700 rounded-2xl font-bold text-xl"
+                  className="w-full py-5 bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-500 rounded-2xl font-bold text-xl transition-all shadow-lg shadow-indigo-600/20"
                 >
                   {currentUser?.lastDailyBonus === new Date().toDateString() ? 'ALREADY CLAIMED' : 'CLAIM BONUS'}
                 </button>
@@ -499,18 +561,20 @@ const App: React.FC = () => {
 
           {activeTab === 'referrals' && (
             <div className="max-w-xl mx-auto py-10">
-              <div className="glass p-8 rounded-3xl space-y-6">
+              <div className="glass p-8 rounded-3xl space-y-6 shadow-xl border border-slate-700">
+                <h2 className="text-2xl font-bold text-center">Refer & Earn</h2>
+                <p className="text-slate-400 text-center text-sm">Share your link and get <span className="text-yellow-500 font-bold">{settings.referralBonusAmount} coins</span> for every new user!</p>
                 <div className="flex gap-2">
-                  <input readOnly value={referralLink} className="flex-1 bg-slate-900 rounded-xl px-4 py-3 font-mono text-xs overflow-hidden" />
-                  <button onClick={handleCopyLink} className="px-6 rounded-xl font-bold bg-slate-800">{copyFeedback ? 'COPIED' : 'COPY'}</button>
+                  <input readOnly value={referralLink} className="flex-1 bg-slate-900 rounded-xl px-4 py-3 font-mono text-[10px] md:text-xs overflow-hidden border border-slate-800" />
+                  <button onClick={handleCopyLink} className="px-6 rounded-xl font-bold bg-slate-800 hover:bg-slate-700 border border-slate-700">{copyFeedback ? 'COPIED' : 'COPY'}</button>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-900 p-4 rounded-2xl text-center">
-                    <div className="text-slate-500 text-xs uppercase font-bold">Referrals</div>
+                  <div className="bg-slate-900/50 p-4 rounded-2xl text-center border border-slate-800">
+                    <div className="text-slate-500 text-[10px] uppercase font-bold mb-1">Total Referrals</div>
                     <div className="text-2xl font-bold">{currentUser?.totalReferrals || 0}</div>
                   </div>
-                  <div className="bg-slate-900 p-4 rounded-2xl text-center">
-                    <div className="text-slate-500 text-xs uppercase font-bold">Earned</div>
+                  <div className="bg-slate-900/50 p-4 rounded-2xl text-center border border-slate-800">
+                    <div className="text-slate-500 text-[10px] uppercase font-bold mb-1">Coins Earned</div>
                     <div className="text-2xl font-bold text-yellow-500">🪙 {(currentUser?.totalReferrals || 0) * settings.referralBonusAmount}</div>
                   </div>
                 </div>
@@ -520,16 +584,18 @@ const App: React.FC = () => {
 
           {activeTab === 'withdraw' && settings.isWithdrawalEnabled && (
             <div className="max-w-2xl mx-auto py-10">
-              <div className="glass p-8 rounded-3xl">
+              <div className="glass p-8 rounded-3xl shadow-xl border border-slate-700">
+                <h2 className="text-2xl font-bold mb-6 text-center">Withdraw Coins</h2>
                 <form onSubmit={(e) => {
                   e.preventDefault();
                   const fd = new FormData(e.currentTarget);
                   submitWithdrawal(fd.get('address') as string, parseInt(fd.get('amount') as string));
                   e.currentTarget.reset();
                 }} className="space-y-4">
-                  <input name="address" required placeholder="Trust Wallet Address (0x...)" className="w-full bg-slate-900 rounded-xl p-3" />
-                  <input name="amount" type="number" required placeholder="Amount" className="w-full bg-slate-900 rounded-xl p-3" />
-                  <button type="submit" className="w-full py-4 bg-indigo-600 rounded-xl font-bold">REQUEST WITHDRAWAL</button>
+                  <input name="address" required placeholder="Trust Wallet / Binance Address (0x...)" className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                  <input name="amount" type="number" required placeholder={`Amount (Min ${settings.minWithdrawal})`} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                  <p className="text-xs text-slate-500 italic px-1">Note: Requests are usually processed within 24 hours.</p>
+                  <button type="submit" className="w-full py-4 bg-indigo-600 rounded-xl font-bold hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-600/20">REQUEST WITHDRAWAL</button>
                 </form>
               </div>
             </div>
@@ -538,53 +604,58 @@ const App: React.FC = () => {
       )}
 
       {view === 'admin' && isAdminAuth && (
-        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-8">
-          <aside className="glass p-4 rounded-3xl h-fit">
+        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-8 animate-in fade-in duration-500">
+          <aside className="glass p-4 rounded-3xl h-fit border border-slate-800 shadow-2xl">
             {(['dashboard', 'users', 'tasks', 'coupons', 'withdrawals', 'settings'] as const).map(tab => (
-              <button key={tab} onClick={() => setActiveAdminTab(tab)} className={`w-full text-left px-4 py-3 rounded-xl font-medium transition-all ${activeAdminTab === tab ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>
+              <button key={tab} onClick={() => setActiveAdminTab(tab)} className={`w-full text-left px-4 py-3 rounded-xl font-medium transition-all mb-1 ${activeAdminTab === tab ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
               </button>
             ))}
-            <button onClick={() => { setIsAdminAuth(false); setView('user'); }} className="w-full text-left px-4 py-3 text-red-400 mt-6 font-medium">Exit Admin</button>
+            <button onClick={() => { setIsAdminAuth(false); setView('user'); }} className="w-full text-left px-4 py-3 text-red-400 mt-6 font-medium hover:bg-red-950/20 rounded-xl">Exit Admin Panel</button>
           </aside>
           
           <section className="space-y-8 pb-20">
             {activeAdminTab === 'dashboard' && (
               <div className="grid md:grid-cols-4 gap-4">
-                <div className="glass p-6 rounded-3xl"><div className="text-slate-500 text-sm mb-1 uppercase">Total Users</div><div className="text-3xl font-black">{users.length}</div></div>
-                <div className="glass p-6 rounded-3xl"><div className="text-slate-500 text-sm mb-1 uppercase">Total Coins</div><div className="text-3xl font-black text-yellow-500">{users.reduce((acc, u) => acc + u.coins, 0)}</div></div>
-                <div className="glass p-6 rounded-3xl"><div className="text-slate-500 text-sm mb-1 uppercase">Pending WD</div><div className="text-3xl font-black text-orange-500">{withdrawals.filter(w => w.status === 'pending').length}</div></div>
-                <div className="glass p-6 rounded-3xl"><div className="text-slate-500 text-sm mb-1 uppercase">Tasks Done</div><div className="text-3xl font-black text-emerald-500">{users.reduce((acc, u) => acc + u.tasksCompleted.length, 0)}</div></div>
+                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-wider font-bold">Total Users</div><div className="text-3xl font-black">{users.length}</div></div>
+                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-wider font-bold">Total Coins</div><div className="text-3xl font-black text-yellow-500">{users.reduce((acc, u) => acc + u.coins, 0).toLocaleString()}</div></div>
+                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-wider font-bold">Pending WD</div><div className="text-3xl font-black text-orange-500">{withdrawals.filter(w => w.status === 'pending').length}</div></div>
+                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-wider font-bold">Tasks Done</div><div className="text-3xl font-black text-emerald-500">{users.reduce((acc, u) => acc + u.tasksCompleted.length, 0)}</div></div>
               </div>
             )}
 
             {activeAdminTab === 'users' && (
-              <div className="glass rounded-3xl overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-800/50">
-                    <tr><th className="p-4">IP</th><th className="p-4">Coins</th><th className="p-4">Joined</th><th className="p-4">Actions</th></tr>
-                  </thead>
-                  <tbody>
-                    {users.map(u => (
-                      <tr key={u.ip} className="border-t border-slate-800/50">
-                        <td className="p-4 font-mono text-xs">{u.ip}</td>
-                        <td className="p-4 font-bold text-yellow-500">{u.coins}</td>
-                        <td className="p-4 text-xs text-slate-500">{new Date(u.joinedAt).toLocaleDateString()}</td>
-                        <td className="p-4">
-                          <button onClick={() => blockUser(u.ip)} className={`px-4 py-2 rounded-lg text-xs font-bold ${u.isBlocked ? 'bg-emerald-600' : 'bg-red-600'}`}>
-                            {u.isBlocked ? 'UNBLOCK' : 'BLOCK'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="glass rounded-3xl overflow-hidden border border-slate-800">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-800/50">
+                      <tr><th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">IP / User</th><th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Balance</th><th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-400">Joined</th><th className="p-4 text-xs font-bold uppercase tracking-wider text-slate-400 text-right">Actions</th></tr>
+                    </thead>
+                    <tbody>
+                      {users.length === 0 ? <tr><td colSpan={4} className="p-20 text-center text-slate-500">No users found.</td></tr> : users.map(u => (
+                        <tr key={u.ip} className="border-t border-slate-800/50 hover:bg-slate-800/10">
+                          <td className="p-4">
+                            <div className="font-mono text-xs">{u.ip}</div>
+                            <div className="text-[10px] text-slate-500 mt-1">Code: {u.referralCode}</div>
+                          </td>
+                          <td className="p-4 font-bold text-yellow-500">{u.coins.toLocaleString()}</td>
+                          <td className="p-4 text-xs text-slate-500">{new Date(u.joinedAt).toLocaleDateString()}</td>
+                          <td className="p-4 text-right">
+                            <button onClick={() => blockUser(u.ip)} className={`px-4 py-2 rounded-lg text-[10px] font-bold transition-colors ${u.isBlocked ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-red-600 hover:bg-red-500'}`}>
+                              {u.isBlocked ? 'UNBLOCK' : 'BLOCK'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
             {activeAdminTab === 'tasks' && (
               <div className="space-y-6">
-                <div className="glass p-6 rounded-3xl">
+                <div className="glass p-6 rounded-3xl border border-slate-800">
                   <h3 className="text-lg font-bold mb-4">Add New Task</h3>
                   <form onSubmit={(e) => {
                     e.preventDefault();
@@ -600,33 +671,37 @@ const App: React.FC = () => {
                     };
                     saveTasks([...tasks, newTask]);
                     e.currentTarget.reset();
+                    alert("Task added successfully!");
                   }} className="grid md:grid-cols-2 gap-4">
-                    <input name="title" placeholder="Title" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                    <input name="reward" type="number" placeholder="Reward Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                    <input name="link" placeholder="Task Link" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                    <select name="category" className="bg-slate-900 rounded-xl p-3 border border-slate-800">
+                    <input name="title" placeholder="Task Title" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
+                    <input name="reward" type="number" placeholder="Reward Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
+                    <input name="link" placeholder="Task Link (URL)" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
+                    <select name="category" className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm">
                       {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
-                    <textarea name="description" placeholder="Description" className="md:col-span-2 bg-slate-900 rounded-xl p-3 border border-slate-800 h-20" />
-                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 rounded-xl font-bold">ADD TASK</button>
+                    <textarea name="description" placeholder="Short Description" className="md:col-span-2 bg-slate-900 rounded-xl p-3 border border-slate-800 h-20 text-sm" />
+                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold shadow-lg shadow-indigo-600/20">ADD TASK</button>
                   </form>
                 </div>
-                <div className="glass rounded-3xl overflow-hidden">
+                <div className="glass rounded-3xl overflow-hidden border border-slate-800">
                   <table className="w-full text-left">
-                    <thead className="bg-slate-800/50"><tr><th className="p-4">Task</th><th className="p-4">Reward</th><th className="p-4">Status</th><th className="p-4">Actions</th></tr></thead>
+                    <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs uppercase text-slate-400">Task Name</th><th className="p-4 text-xs uppercase text-slate-400">Reward</th><th className="p-4 text-xs uppercase text-slate-400">Status</th><th className="p-4 text-xs uppercase text-slate-400 text-right">Actions</th></tr></thead>
                     <tbody>
-                      {tasks.map(t => (
+                      {tasks.length === 0 ? <tr><td colSpan={4} className="p-10 text-center text-slate-500">No tasks created yet.</td></tr> : tasks.map(t => (
                         <tr key={t.id} className="border-t border-slate-800/50">
-                          <td className="p-4 text-sm font-medium">{t.title}</td>
+                          <td className="p-4">
+                            <div className="text-sm font-medium">{t.title}</div>
+                            <div className="text-[10px] text-slate-500 uppercase">{t.category}</div>
+                          </td>
                           <td className="p-4 font-bold text-yellow-500">🪙 {t.reward}</td>
                           <td className="p-4">
-                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${t.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${t.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
                               {t.isActive ? 'ACTIVE' : 'INACTIVE'}
                             </span>
                           </td>
-                          <td className="p-4 flex gap-2">
-                            <button onClick={() => saveTasks(tasks.map(tk => tk.id === t.id ? { ...tk, isActive: !tk.isActive } : tk))} className="text-xs bg-slate-800 px-3 py-1 rounded-lg">Toggle</button>
-                            <button onClick={() => saveTasks(tasks.filter(tk => tk.id !== t.id))} className="text-xs bg-red-900/50 text-red-400 px-3 py-1 rounded-lg">Del</button>
+                          <td className="p-4 text-right flex justify-end gap-2">
+                            <button onClick={() => saveTasks(tasks.map(tk => tk.id === t.id ? { ...tk, isActive: !tk.isActive } : tk))} className="text-[10px] bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">Toggle</button>
+                            <button onClick={() => { if(confirm("Delete task?")) saveTasks(tasks.filter(tk => tk.id !== t.id)) }} className="text-[10px] bg-red-900/50 text-red-400 px-3 py-1.5 rounded-lg border border-red-900/50">Del</button>
                           </td>
                         </tr>
                       ))}
@@ -638,14 +713,14 @@ const App: React.FC = () => {
 
             {activeAdminTab === 'coupons' && (
               <div className="space-y-6">
-                <div className="glass p-6 rounded-3xl">
-                  <h3 className="text-lg font-bold mb-4">Create Coupon</h3>
+                <div className="glass p-6 rounded-3xl border border-slate-800">
+                  <h3 className="text-lg font-bold mb-4">Create New Coupon</h3>
                   <form onSubmit={(e) => {
                     e.preventDefault();
                     const fd = new FormData(e.currentTarget);
                     const newCoupon: Coupon = {
                       id: Math.random().toString(36).substring(7),
-                      code: (fd.get('code') as string).toUpperCase(),
+                      code: (fd.get('code') as string).toUpperCase().trim(),
                       reward: parseInt(fd.get('reward') as string),
                       usageLimit: parseInt(fd.get('limit') as string),
                       expiryDate: fd.get('expiry') as string,
@@ -653,25 +728,26 @@ const App: React.FC = () => {
                     };
                     saveCoupons([...coupons, newCoupon]);
                     e.currentTarget.reset();
+                    alert("Coupon created successfully!");
                   }} className="grid md:grid-cols-2 gap-4">
-                    <input name="code" placeholder="CODE123" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 font-mono" />
-                    <input name="reward" type="number" placeholder="Reward Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                    <input name="limit" type="number" placeholder="Usage Limit" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                    <input name="expiry" type="date" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-white" />
-                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 rounded-xl font-bold">CREATE COUPON</button>
+                    <input name="code" placeholder="E.g. WELCOME100" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm font-mono" />
+                    <input name="reward" type="number" placeholder="Reward Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
+                    <input name="limit" type="number" placeholder="Total Usage Limit" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
+                    <input name="expiry" type="date" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-white text-sm" />
+                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold">CREATE COUPON</button>
                   </form>
                 </div>
-                <div className="glass rounded-3xl overflow-hidden">
+                <div className="glass rounded-3xl overflow-hidden border border-slate-800">
                   <table className="w-full text-left">
-                    <thead className="bg-slate-800/50"><tr><th className="p-4">Code</th><th className="p-4">Reward</th><th className="p-4">Uses</th><th className="p-4">Actions</th></tr></thead>
+                    <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs uppercase text-slate-400">Code</th><th className="p-4 text-xs uppercase text-slate-400">Reward</th><th className="p-4 text-xs uppercase text-slate-400">Uses / Limit</th><th className="p-4 text-xs uppercase text-slate-400 text-right">Actions</th></tr></thead>
                     <tbody>
-                      {coupons.map(c => (
+                      {coupons.length === 0 ? <tr><td colSpan={4} className="p-10 text-center text-slate-500">No coupons active.</td></tr> : coupons.map(c => (
                         <tr key={c.id} className="border-t border-slate-800/50">
-                          <td className="p-4 font-mono font-bold">{c.code}</td>
-                          <td className="p-4 text-yellow-500">{c.reward}</td>
+                          <td className="p-4 font-mono font-bold text-indigo-400">{c.code}</td>
+                          <td className="p-4 text-yellow-500 font-bold">{c.reward}</td>
                           <td className="p-4 text-xs">{c.usedCount} / {c.usageLimit}</td>
-                          <td className="p-4">
-                            <button onClick={() => saveCoupons(coupons.filter(cp => cp.id !== c.id))} className="text-xs bg-red-900/50 text-red-400 px-3 py-1 rounded-lg">Del</button>
+                          <td className="p-4 text-right">
+                            <button onClick={() => { if(confirm("Delete coupon?")) saveCoupons(coupons.filter(cp => cp.id !== c.id)) }} className="text-[10px] bg-red-900/50 text-red-400 px-3 py-1.5 rounded-lg">Delete</button>
                           </td>
                         </tr>
                       ))}
@@ -682,72 +758,79 @@ const App: React.FC = () => {
             )}
 
             {activeAdminTab === 'withdrawals' && (
-              <div className="glass rounded-3xl overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-800/50"><tr><th className="p-4">User IP</th><th className="p-4">Amount</th><th className="p-4">Wallet</th><th className="p-4">Status</th><th className="p-4">Actions</th></tr></thead>
-                  <tbody>
-                    {withdrawals.sort((a,b) => a.status === 'pending' ? -1 : 1).map(w => (
-                      <tr key={w.id} className="border-t border-slate-800/50">
-                        <td className="p-4 text-xs font-mono">{w.ip}</td>
-                        <td className="p-4 font-bold text-orange-400">{w.amount}</td>
-                        <td className="p-4 text-[10px] font-mono">{w.walletAddress}</td>
-                        <td className="p-4">
-                          <span className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase ${w.status === 'pending' ? 'bg-orange-500/20 text-orange-400' : w.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                            {w.status}
-                          </span>
-                        </td>
-                        <td className="p-4">
-                          {w.status === 'pending' && (
-                            <div className="flex gap-2">
-                              <button onClick={() => updateWithdrawalStatus(w.id, 'approved')} className="bg-emerald-600 text-[10px] px-2 py-1 rounded">Approve</button>
-                              <button onClick={() => updateWithdrawalStatus(w.id, 'rejected')} className="bg-red-600 text-[10px] px-2 py-1 rounded">Reject</button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="glass rounded-3xl overflow-hidden border border-slate-800 shadow-2xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs text-slate-400 font-bold uppercase tracking-wider">User IP</th><th className="p-4 text-xs text-slate-400 font-bold uppercase tracking-wider">Amount</th><th className="p-4 text-xs text-slate-400 font-bold uppercase tracking-wider">Wallet Address</th><th className="p-4 text-xs text-slate-400 font-bold uppercase tracking-wider">Status</th><th className="p-4 text-xs text-slate-400 font-bold uppercase tracking-wider text-right">Actions</th></tr></thead>
+                    <tbody>
+                      {withdrawals.length === 0 ? <tr><td colSpan={5} className="p-20 text-center text-slate-500">No withdrawal requests found.</td></tr> : [...withdrawals].sort((a,b) => a.status === 'pending' ? -1 : 1).map(w => (
+                        <tr key={w.id} className="border-t border-slate-800/50 hover:bg-slate-800/10">
+                          <td className="p-4 text-xs font-mono">{w.ip}</td>
+                          <td className="p-4 font-bold text-orange-400">{w.amount.toLocaleString()}</td>
+                          <td className="p-4 text-[9px] font-mono break-all max-w-[150px]">{w.walletAddress}</td>
+                          <td className="p-4">
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${w.status === 'pending' ? 'bg-orange-500/20 text-orange-400' : w.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {w.status}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            {w.status === 'pending' && (
+                              <div className="flex gap-1 justify-end">
+                                <button onClick={() => updateWithdrawalStatus(w.id, 'approved')} className="bg-emerald-600 hover:bg-emerald-500 text-[9px] px-2 py-1.5 rounded font-bold transition-colors">Approve</button>
+                                <button onClick={() => updateWithdrawalStatus(w.id, 'rejected')} className="bg-red-600 hover:bg-red-500 text-[9px] px-2 py-1.5 rounded font-bold transition-colors">Reject</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
             {activeAdminTab === 'settings' && (
-              <div className="glass p-8 rounded-3xl space-y-8">
+              <div className="glass p-8 rounded-3xl space-y-8 border border-slate-800 shadow-2xl">
                 <div className="grid md:grid-cols-2 gap-8">
                   <div className="space-y-4">
-                    <h3 className="font-bold border-b border-slate-800 pb-2">Earning Settings</h3>
+                    <h3 className="font-bold border-b border-slate-800 pb-2 text-indigo-400">System Parameters</h3>
                     <div>
-                      <label className="text-xs text-slate-500 block mb-1">Daily Bonus Amount</label>
-                      <input type="number" value={settings.dailyBonusAmount} onChange={(e) => saveSettings({ ...settings, dailyBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                      <label className="text-xs text-slate-500 block mb-1">Daily Check-in Reward</label>
+                      <input type="number" value={settings.dailyBonusAmount} onChange={(e) => saveSettings({ ...settings, dailyBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
                     </div>
                     <div>
-                      <label className="text-xs text-slate-500 block mb-1">Referral Bonus Amount</label>
-                      <input type="number" value={settings.referralBonusAmount} onChange={(e) => saveSettings({ ...settings, referralBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                      <label className="text-xs text-slate-500 block mb-1">Referral Reward (per user)</label>
+                      <input type="number" value={settings.referralBonusAmount} onChange={(e) => saveSettings({ ...settings, referralBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
                     </div>
                     <div>
-                      <label className="text-xs text-slate-500 block mb-1">Min Withdrawal</label>
-                      <input type="number" value={settings.minWithdrawal} onChange={(e) => saveSettings({ ...settings, minWithdrawal: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                      <label className="text-xs text-slate-500 block mb-1">Minimum Coins for Withdrawal</label>
+                      <input type="number" value={settings.minWithdrawal} onChange={(e) => saveSettings({ ...settings, minWithdrawal: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
                     </div>
                     <div className="flex items-center gap-3 pt-4">
-                      <input type="checkbox" checked={settings.isWithdrawalEnabled} onChange={(e) => saveSettings({ ...settings, isWithdrawalEnabled: e.target.checked })} className="w-5 h-5 rounded" id="wd-enable" />
-                      <label htmlFor="wd-enable" className="font-bold">Enable Withdrawals</label>
+                      <div className={`w-12 h-6 rounded-full relative transition-colors cursor-pointer ${settings.isWithdrawalEnabled ? 'bg-indigo-600' : 'bg-slate-700'}`} onClick={() => saveSettings({ ...settings, isWithdrawalEnabled: !settings.isWithdrawalEnabled })}>
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings.isWithdrawalEnabled ? 'left-7' : 'left-1'}`} />
+                      </div>
+                      <label className="font-bold text-sm">Enable Global Withdrawals</label>
                     </div>
                   </div>
                   
                   <div className="space-y-4">
-                    <h3 className="font-bold border-b border-slate-800 pb-2">Monetization Ad Codes</h3>
+                    <h3 className="font-bold border-b border-slate-800 pb-2 text-indigo-400">Ad Placement HTML</h3>
                     {Object.keys(settings.adCodes).map(key => (
                       <div key={key}>
-                        <label className="text-xs text-slate-500 block mb-1 uppercase">{key} Ad Slot (HTML)</label>
+                        <label className="text-xs text-slate-500 block mb-1 uppercase tracking-widest">{key} Ad Slot</label>
                         <textarea 
                           value={settings.adCodes[key]} 
                           onChange={(e) => saveSettings({ ...settings, adCodes: { ...settings.adCodes, [key]: e.target.value } })}
-                          className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-xs font-mono h-20"
-                          placeholder="<script>...</script>"
+                          className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-[10px] font-mono h-24 focus:border-indigo-500 outline-none"
+                          placeholder="Paste Ad HTML code here..."
                         />
                       </div>
                     ))}
                   </div>
+                </div>
+                <div className="pt-4 border-t border-slate-800 text-center">
+                   <p className="text-xs text-slate-500">Settings are automatically saved to browser storage.</p>
                 </div>
               </div>
             )}
