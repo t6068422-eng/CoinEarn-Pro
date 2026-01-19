@@ -49,11 +49,12 @@ const App: React.FC = () => {
   const [pendingSettings, setPendingSettings] = useState<AppSettings>(settings);
 
   // User UI States
-  const [activeTab, setActiveTab] = useState<'tasks' | 'games' | 'bonus' | 'withdraw' | 'referrals'>('tasks');
-  const [activeAdminTab, setActiveAdminTab] = useState<'dashboard' | 'users' | 'tasks' | 'withdrawals' | 'ads' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'games' | 'rewards' | 'withdraw' | 'referrals'>('tasks');
+  const [activeAdminTab, setActiveAdminTab] = useState<'dashboard' | 'users' | 'tasks' | 'coupons' | 'withdrawals' | 'ads' | 'settings'>('dashboard');
   const [activeGame, setActiveGame] = useState<'memory' | 'clicker' | null>(null);
   const [isTaskPending, setIsTaskPending] = useState<string | null>(null);
   const [taskTimer, setTaskTimer] = useState(0);
+  const [couponInput, setCouponInput] = useState('');
 
   const referralLink = useMemo(() => {
     return `${window.location.origin}${window.location.pathname}?ref=${currentUser?.referralCode || ''}`;
@@ -105,6 +106,7 @@ const App: React.FC = () => {
       setCurrentUser(user);
       setUsers(allUsers);
       setTasks(StorageService.getTasks());
+      setCoupons(StorageService.getCoupons());
       setWithdrawals(StorageService.getWithdrawals());
 
       if (!StorageService.isWelcomed(storedIp)) {
@@ -151,6 +153,47 @@ const App: React.FC = () => {
     }, 1000);
   };
 
+  const handleClaimCoupon = () => {
+    if (!currentUser) return;
+    const code = couponInput.trim().toUpperCase();
+    if (!code) return;
+
+    const coupon = coupons.find(c => c.code.toUpperCase() === code);
+    
+    if (!coupon) {
+      alert('Invalid coupon code.');
+      return;
+    }
+
+    if (currentUser.couponsClaimed.includes(coupon.id)) {
+      alert('You have already claimed this coupon.');
+      return;
+    }
+
+    if (coupon.usedCount >= coupon.usageLimit) {
+      alert('This coupon has reached its usage limit.');
+      return;
+    }
+
+    if (new Date(coupon.expiryDate) < new Date()) {
+      alert('This coupon has expired.');
+      return;
+    }
+
+    // Success
+    const updatedCoupons = coupons.map(c => c.id === coupon.id ? { ...c, usedCount: c.usedCount + 1 } : c);
+    setCoupons(updatedCoupons);
+    StorageService.setCoupons(updatedCoupons);
+
+    updateCurrentUser({
+      coins: currentUser.coins + coupon.reward,
+      couponsClaimed: [...currentUser.couponsClaimed, coupon.id]
+    });
+
+    setCouponInput('');
+    alert(`Success! ${coupon.reward} coins added to your balance.`);
+  };
+
   // --- Admin Logic ---
   const handleWithdrawalAction = (id: string, status: 'approved' | 'rejected') => {
     const updated = withdrawals.map(w => w.id === id ? { ...w, status } : w);
@@ -185,10 +228,33 @@ const App: React.FC = () => {
     e.currentTarget.reset();
   };
 
+  const handleAddCoupon = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const newCoupon: Coupon = {
+      id: Math.random().toString(36).substring(7),
+      code: (formData.get('code') as string).toUpperCase(),
+      reward: Number(formData.get('reward')),
+      usageLimit: Number(formData.get('limit')),
+      usedCount: 0,
+      expiryDate: formData.get('expiry') as string,
+    };
+    const updated = [...coupons, newCoupon];
+    setCoupons(updated);
+    StorageService.setCoupons(updated);
+    e.currentTarget.reset();
+  };
+
   const handleDeleteTask = (id: string) => {
     const updated = tasks.filter(t => t.id !== id);
     setTasks(updated);
     StorageService.setTasks(updated);
+  };
+
+  const handleDeleteCoupon = (id: string) => {
+    const updated = coupons.filter(c => c.id !== id);
+    setCoupons(updated);
+    StorageService.setCoupons(updated);
   };
 
   const handleAddAd = (section: string) => {
@@ -291,7 +357,7 @@ const App: React.FC = () => {
             {[
               { id: 'tasks', label: 'Tasks', icon: '⚡' },
               { id: 'games', label: 'Games', icon: '🎮' },
-              { id: 'bonus', label: 'Daily', icon: '🎁' },
+              { id: 'rewards', label: 'Rewards', icon: '🎁' },
               { id: 'referrals', label: 'Refer', icon: '🤝' },
               ...(settings.isWithdrawalEnabled ? [{ id: 'withdraw' as const, label: 'Withdraw', icon: '🏦' }] : []),
             ].map(tab => (
@@ -356,30 +422,55 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {activeTab === 'bonus' && (
-              <div className="max-w-md mx-auto py-10 text-center">
-                <div className="glass p-10 rounded-3xl">
-                  <div className="text-7xl mb-6">🎁</div>
-                  <h2 className="text-2xl font-bold mb-2">Daily Loot Box</h2>
-                  <p className="text-slate-400 mb-8">Secure {settings.dailyBonusAmount} coins every 24 hours.</p>
-                  <button 
-                    onClick={() => {
-                      const now = new Date();
-                      const last = currentUser?.lastDailyBonus ? new Date(currentUser.lastDailyBonus) : null;
-                      if (last && now.getTime() - last.getTime() < 24 * 60 * 60 * 1000) {
-                        alert('On cooldown. Try again later.');
-                        return;
-                      }
-                      updateCurrentUser({
-                        coins: (currentUser?.coins || 0) + settings.dailyBonusAmount,
-                        lastDailyBonus: now.toISOString()
-                      });
-                      alert('Success! Reward added.');
-                    }}
-                    className="w-full py-4 bg-yellow-500 hover:bg-yellow-600 text-black font-black rounded-xl transition-all btn-hover"
-                  >
-                    COLLECT NOW
-                  </button>
+            {activeTab === 'rewards' && (
+              <div className="max-w-2xl mx-auto space-y-8 py-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Daily Bonus Section */}
+                  <div className="glass p-8 rounded-3xl text-center flex flex-col items-center">
+                    <div className="text-6xl mb-6">🎁</div>
+                    <h2 className="text-2xl font-bold mb-2">Daily Bonus</h2>
+                    <p className="text-slate-400 mb-8 text-sm">Secure {settings.dailyBonusAmount} coins every 24 hours.</p>
+                    <button 
+                      onClick={() => {
+                        const now = new Date();
+                        const last = currentUser?.lastDailyBonus ? new Date(currentUser.lastDailyBonus) : null;
+                        if (last && now.getTime() - last.getTime() < 24 * 60 * 60 * 1000) {
+                          alert('On cooldown. Try again later.');
+                          return;
+                        }
+                        updateCurrentUser({
+                          coins: (currentUser?.coins || 0) + settings.dailyBonusAmount,
+                          lastDailyBonus: now.toISOString()
+                        });
+                        alert('Success! Reward added.');
+                      }}
+                      className="mt-auto w-full py-4 bg-yellow-500 hover:bg-yellow-600 text-black font-black rounded-xl transition-all btn-hover"
+                    >
+                      COLLECT DAILY
+                    </button>
+                  </div>
+
+                  {/* Coupon Section */}
+                  <div className="glass p-8 rounded-3xl text-center flex flex-col items-center">
+                    <div className="text-6xl mb-6">🎟️</div>
+                    <h2 className="text-2xl font-bold mb-2">Redeem Coupon</h2>
+                    <p className="text-slate-400 mb-8 text-sm">Found a secret code? Paste it below to unlock instant coins.</p>
+                    <div className="w-full space-y-3 mt-auto">
+                      <input 
+                        type="text" 
+                        value={couponInput}
+                        onChange={(e) => setCouponInput(e.target.value)}
+                        placeholder="ENTER CODE..."
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-4 text-center font-bold tracking-widest text-indigo-400 uppercase outline-none focus:border-indigo-500 transition-all"
+                      />
+                      <button 
+                        onClick={handleClaimCoupon}
+                        className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl transition-all btn-hover"
+                      >
+                        REDEEM NOW
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <AdContainer codes={settings.adCodes.daily || []} />
               </div>
@@ -458,6 +549,7 @@ const App: React.FC = () => {
                 { id: 'dashboard', label: 'Dashboard' },
                 { id: 'users', label: 'User Data' },
                 { id: 'tasks', label: 'Tasks' },
+                { id: 'coupons', label: 'Coupons' },
                 { id: 'withdrawals', label: 'Withdrawals' },
                 { id: 'ads', label: 'Ads Manager' },
                 { id: 'settings', label: 'Settings' },
@@ -488,8 +580,8 @@ const App: React.FC = () => {
                   <div className="text-3xl font-black">{withdrawals.filter(w => w.status === 'pending').length}</div>
                 </div>
                 <div className="glass p-6 rounded-2xl">
-                  <div className="text-slate-400 text-xs font-bold mb-1">Task Count</div>
-                  <div className="text-3xl font-black">{tasks.length}</div>
+                  <div className="text-slate-400 text-xs font-bold mb-1">Active Coupons</div>
+                  <div className="text-3xl font-black">{coupons.length}</div>
                 </div>
               </div>
             )}
@@ -557,6 +649,65 @@ const App: React.FC = () => {
                           </td>
                         </tr>
                       ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeAdminTab === 'coupons' && (
+              <div className="space-y-6">
+                <div className="glass p-6 rounded-2xl">
+                  <h3 className="font-bold mb-4">Generate Coupon Code</h3>
+                  <form onSubmit={handleAddCoupon} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <input name="code" placeholder="CODE (e.g. WIN100)" className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-sm outline-none focus:border-indigo-500 uppercase" required />
+                    <input name="reward" type="number" placeholder="Reward Value" className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-sm outline-none focus:border-indigo-500" required />
+                    <input name="limit" type="number" placeholder="Max Claims" className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-sm outline-none focus:border-indigo-500" required />
+                    <input name="expiry" type="date" className="bg-slate-950 p-3 rounded-lg border border-slate-800 text-sm outline-none focus:border-indigo-500" required />
+                    <button type="submit" className="col-span-full bg-indigo-600 rounded-lg py-3 font-bold text-sm hover:bg-indigo-700 transition-colors">Create Coupon</button>
+                  </form>
+                </div>
+                <div className="glass rounded-2xl overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-white/5">
+                      <tr>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500">Code</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500">Reward</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500">Usage</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500">Expiry</th>
+                        <th className="px-6 py-4 text-xs font-bold text-slate-500 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {coupons.map(c => {
+                        const isExpired = new Date(c.expiryDate) < new Date();
+                        const isFull = c.usedCount >= c.usageLimit;
+                        return (
+                          <tr key={c.id} className="hover:bg-white/5">
+                            <td className="px-6 py-4 font-black tracking-wider text-indigo-400">{c.code}</td>
+                            <td className="px-6 py-4 font-bold text-yellow-500">{c.reward} 🪙</td>
+                            <td className="px-6 py-4">
+                              <div className="flex flex-col gap-1 w-24">
+                                <div className="text-[10px] text-slate-500">{c.usedCount} / {c.usageLimit}</div>
+                                <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
+                                  <div 
+                                    className={`h-full transition-all ${isFull ? 'bg-red-500' : 'bg-emerald-500'}`} 
+                                    style={{ width: `${(c.usedCount / c.usageLimit) * 100}%` }}
+                                  />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className={`text-[10px] font-bold px-2 py-1 rounded ${isExpired ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-400'}`}>
+                                {c.expiryDate}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-right">
+                              <button onClick={() => handleDeleteCoupon(c.id)} className="text-red-400 font-bold hover:scale-110 transition-transform">✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
