@@ -1,10 +1,9 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Layout from './components/Layout';
 import { MemoryGame, ClickerGame } from './components/Games';
 import { StorageService } from './services/storage';
 import { UserProfile, Task, Coupon, WithdrawalRequest, AppSettings } from './types';
-import { ADMIN_EMAIL, ADMIN_PASSWORD, CATEGORIES } from './constants';
+import { ADMIN_EMAIL, ADMIN_PASSWORD, CATEGORIES, INITIAL_GAMES } from './constants';
 
 const AdDisplay: React.FC<{ codes?: string[], className?: string }> = ({ codes, className }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -16,7 +15,7 @@ const AdDisplay: React.FC<{ codes?: string[], className?: string }> = ({ codes, 
         if (!html || html.trim() === '') return;
         try {
           const wrapper = document.createElement('div');
-          wrapper.className = 'ad-slot-wrapper mb-4 last:mb-0 w-full flex justify-center';
+          wrapper.className = 'ad-slot-wrapper mb-6 last:mb-0 w-full flex justify-center';
           const range = document.createRange();
           const fragment = range.createContextualFragment(html);
           wrapper.appendChild(fragment);
@@ -33,12 +32,11 @@ const AdDisplay: React.FC<{ codes?: string[], className?: string }> = ({ codes, 
   return (
     <div 
       ref={containerRef} 
-      className={`ad-container my-6 flex flex-col items-center gap-4 ${className}`}
+      className={`ad-container my-8 flex flex-col items-center gap-6 ${className}`}
     />
   );
 };
 
-// Fixed the missing implementation and added export default App
 const App: React.FC = () => {
   const [view, setView] = useState<'user' | 'admin' | 'admin-login'>('user');
   const [isAdminAuth, setIsAdminAuth] = useState(false);
@@ -62,65 +60,70 @@ const App: React.FC = () => {
   const [taskTimer, setTaskTimer] = useState(0);
 
   const referralLink = useMemo(() => {
-    return `${window.location.origin}${window.location.pathname}?ref=${currentUser?.referralCode}`;
+    return `${window.location.origin}${window.location.pathname}?ref=${currentUser?.referralCode || ''}`;
   }, [currentUser?.referralCode]);
 
   useEffect(() => {
     setPendingSettings(settings);
   }, [settings]);
 
-  // Initial user loading and registration
   useEffect(() => {
     const init = async () => {
-      // Mocking IP retrieval for local storage simulation
-      const mockIp = '127.0.0.1';
-      setIp(mockIp);
-
-      const allUsers = StorageService.getUsers();
-      setUsers(allUsers);
-      
-      let user = allUsers.find(u => u.ip === mockIp);
-      
-      if (!user) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const refCode = urlParams.get('ref');
-        let referredBy = null;
-        
-        if (refCode) {
-          const referrer = allUsers.find(u => u.referralCode === refCode);
-          if (referrer) {
-            referredBy = referrer.referralCode;
-            referrer.coins += settings.referralBonusAmount;
-            referrer.totalReferrals += 1;
-            StorageService.setUsers([...allUsers]);
-          }
+      try {
+        let storedIp: string;
+        try {
+          storedIp = localStorage.getItem('ce_cached_ip') || 'user-' + Math.random().toString(36).substring(2, 7);
+          localStorage.setItem('ce_cached_ip', storedIp);
+        } catch {
+          storedIp = 'anonymous-' + Math.random().toString(36).substring(2, 7);
         }
+        setIp(storedIp);
 
-        user = {
-          ip: mockIp,
-          coins: 0,
-          tasksCompleted: [],
-          couponsClaimed: [],
-          lastDailyBonus: null,
-          referralCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
-          referredBy,
-          totalReferrals: 0,
-          isBlocked: false,
-          joinedAt: new Date().toISOString(),
-        };
+        const allUsers = StorageService.getUsers();
+        let user = allUsers.find(u => u.ip === storedIp);
         
-        const newUsers = [...StorageService.getUsers(), user];
-        StorageService.setUsers(newUsers);
-        setUsers(newUsers);
-      }
-      
-      setCurrentUser(user);
-      setTasks(StorageService.getTasks());
-      setCoupons(StorageService.getCoupons());
-      setWithdrawals(StorageService.getWithdrawals());
+        if (!user) {
+          const urlParams = new URLSearchParams(window.location.search);
+          const refCode = urlParams.get('ref');
+          let referredBy = null;
+          
+          if (refCode) {
+            const referrer = allUsers.find(u => u.referralCode === refCode);
+            if (referrer) {
+              referredBy = referrer.referralCode;
+              referrer.coins += settings.referralBonusAmount;
+              referrer.totalReferrals += 1;
+              StorageService.setUsers([...allUsers]);
+            }
+          }
 
-      if (!StorageService.isWelcomed(mockIp)) {
-        setShowWelcome(true);
+          user = {
+            ip: storedIp,
+            coins: 100,
+            tasksCompleted: [],
+            couponsClaimed: [],
+            lastDailyBonus: null,
+            referralCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
+            referredBy,
+            totalReferrals: 0,
+            isBlocked: false,
+            joinedAt: new Date().toISOString(),
+          };
+          allUsers.push(user);
+          StorageService.setUsers(allUsers);
+        }
+        
+        setCurrentUser(user);
+        setUsers(allUsers);
+        setTasks(StorageService.getTasks());
+        setCoupons(StorageService.getCoupons());
+        setWithdrawals(StorageService.getWithdrawals());
+
+        if (!StorageService.isWelcomed(storedIp)) {
+          setShowWelcome(true);
+        }
+      } catch (error) {
+        console.error("Critical initialization failure:", error);
       }
     };
     init();
@@ -139,31 +142,12 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDailyBonus = () => {
-    if (!currentUser) return;
-    const now = new Date();
-    const last = currentUser.lastDailyBonus ? new Date(currentUser.lastDailyBonus) : null;
-    
-    if (last && now.getTime() - last.getTime() < 24 * 60 * 60 * 1000) {
-      alert('Bonus already claimed today!');
-      return;
-    }
-
-    updateCurrentUser({
-      coins: currentUser.coins + settings.dailyBonusAmount,
-      lastDailyBonus: now.toISOString()
-    });
-    alert(`Success! You earned ${settings.dailyBonusAmount} coins.`);
-  };
-
   const handleTaskComplete = (taskId: string) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task || !currentUser || currentUser.tasksCompleted.includes(taskId)) return;
-
     setIsTaskPending(taskId);
-    setTaskTimer(10); // 10 second timer to simulate validation
+    setTaskTimer(15);
     window.open(task.link, '_blank');
-
     const interval = setInterval(() => {
       setTaskTimer(prev => {
         if (prev <= 1) {
@@ -180,90 +164,34 @@ const App: React.FC = () => {
     }, 1000);
   };
 
-  const handleGameComplete = (baseReward: number, timeSpent: number) => {
-    if (!currentUser) return;
-    const game = INITIAL_GAMES.find(g => g.id === activeGame);
-    if (!game) return;
-
-    const timeBonus = Math.floor(timeSpent / 60) * game.timeBonus;
-    const totalReward = Math.min(baseReward + timeBonus, game.maxReward);
-
-    updateCurrentUser({ coins: currentUser.coins + totalReward });
-    setActiveGame(null);
-    alert(`Game over! You earned ${totalReward} coins.`);
+  const handleSettingsSave = () => {
+    setSettings(pendingSettings);
+    StorageService.setSettings(pendingSettings);
+    alert('Global settings updated successfully!');
   };
 
-  const handleCouponRedeem = (code: string) => {
-    if (!currentUser) return;
-    const coupon = coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
-    
-    if (!coupon) {
-      alert('Invalid coupon code!');
-      return;
-    }
-    if (coupon.usedCount >= coupon.usageLimit) {
-      alert('Coupon usage limit reached!');
-      return;
-    }
-    if (currentUser.couponsClaimed.includes(coupon.id)) {
-      alert('You have already claimed this coupon!');
-      return;
-    }
-    if (new Date(coupon.expiryDate) < new Date()) {
-      alert('Coupon has expired!');
-      return;
-    }
-
-    coupon.usedCount += 1;
-    StorageService.setCoupons([...coupons]);
-    setCoupons([...coupons]);
-
-    updateCurrentUser({
-      coins: currentUser.coins + coupon.reward,
-      couponsClaimed: [...currentUser.couponsClaimed, coupon.id]
+  const addAdSlot = (section: string) => {
+    const currentCodes = pendingSettings.adCodes[section] || [];
+    setPendingSettings({
+      ...pendingSettings,
+      adCodes: { ...pendingSettings.adCodes, [section]: [...currentCodes, ""] }
     });
-    alert(`Success! ${coupon.reward} coins added to your balance.`);
   };
 
-  const handleWithdrawal = (address: string, amount: number) => {
-    if (!currentUser) return;
-    if (amount < settings.minWithdrawal) {
-      alert(`Minimum withdrawal is ${settings.minWithdrawal} coins.`);
-      return;
-    }
-    if (currentUser.coins < amount) {
-      alert('Insufficient balance!');
-      return;
-    }
-
-    const request: WithdrawalRequest = {
-      id: Math.random().toString(36).substring(7),
-      ip: currentUser.ip,
-      amount,
-      walletAddress: address,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    };
-
-    const updatedWithdrawals = [request, ...withdrawals];
-    StorageService.setWithdrawals(updatedWithdrawals);
-    setWithdrawals(updatedWithdrawals);
-    
-    updateCurrentUser({ coins: currentUser.coins - amount });
-    alert('Withdrawal request submitted successfully!');
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopyFeedback(true);
-    setTimeout(() => setCopyFeedback(false), 2000);
+  const removeAdSlot = (section: string, index: number) => {
+    const currentCodes = [...(pendingSettings.adCodes[section] || [])];
+    currentCodes.splice(index, 1);
+    setPendingSettings({
+      ...pendingSettings,
+      adCodes: { ...pendingSettings.adCodes, [section]: currentCodes }
+    });
   };
 
   if (view === 'admin-login') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
         <form 
-          className="glass p-8 rounded-3xl w-full max-w-sm"
+          className="glass p-10 rounded-[2.5rem] w-full max-w-sm border-white/10 shadow-2xl animate-in zoom-in-95 duration-500"
           onSubmit={(e) => {
             e.preventDefault();
             const formData = new FormData(e.currentTarget);
@@ -271,15 +199,16 @@ const App: React.FC = () => {
               setIsAdminAuth(true);
               setView('admin');
             } else {
-              alert('Invalid credentials');
+              alert('Access Denied: Invalid Credentials');
             }
           }}
         >
-          <h2 className="text-2xl font-bold mb-6 text-center">Admin Login</h2>
-          <input name="email" type="email" placeholder="Email" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3 mb-4 text-white" required />
-          <input name="password" type="password" placeholder="Password" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3 mb-6 text-white" required />
-          <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-xl font-bold">Login</button>
-          <button type="button" onClick={() => setView('user')} className="w-full mt-4 text-slate-400 text-sm">Back to User App</button>
+          <div className="w-16 h-16 bg-indigo-600 rounded-2xl mx-auto mb-6 flex items-center justify-center text-3xl shadow-lg shadow-indigo-600/30">🔐</div>
+          <h2 className="text-2xl font-bold mb-6 text-center tracking-tight">Admin Terminal</h2>
+          <input name="email" type="email" placeholder="Email Address" className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 mb-4 text-white focus:border-indigo-500 transition-colors" required />
+          <input name="password" type="password" placeholder="Passkey" className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-5 py-4 mb-6 text-white focus:border-indigo-500 transition-colors" required />
+          <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 py-4 rounded-2xl font-bold shadow-xl shadow-indigo-600/20 transition-transform active:scale-95">Authorize Access</button>
+          <button type="button" onClick={() => setView('user')} className="w-full mt-6 text-slate-500 text-sm hover:text-slate-300 transition-colors">Return to Dashboard</button>
         </form>
       </div>
     );
@@ -292,114 +221,116 @@ const App: React.FC = () => {
       isAdmin={view === 'admin'}
     >
       {view === 'user' ? (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          {/* Header Stats */}
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="glass p-6 rounded-3xl bg-gradient-to-br from-indigo-600/20 to-transparent border-indigo-500/20">
-              <h3 className="text-slate-400 text-sm font-medium mb-1">Balance</h3>
-              <div className="text-3xl font-bold text-white flex items-center gap-2">
-                <span className="text-yellow-500">🪙</span> {currentUser?.coins.toLocaleString()}
-              </div>
+        <div className="space-y-12 animate-in fade-in slide-in-from-bottom-6 duration-700">
+          
+          <section className="relative py-12 flex flex-col items-center text-center overflow-hidden">
+            <div className="hero-glow"></div>
+            <div className="floating coin-3d-scene mb-8">
+              <div className="coin-3d-model">$</div>
             </div>
-            <div className="glass p-6 rounded-3xl bg-gradient-to-br from-emerald-600/20 to-transparent border-emerald-500/20">
-              <h3 className="text-slate-400 text-sm font-medium mb-1">Referrals</h3>
-              <div className="text-3xl font-bold text-white flex items-center gap-2">
-                <span className="text-blue-500">👥</span> {currentUser?.totalReferrals || 0}
-              </div>
-            </div>
-            <div className="glass p-6 rounded-3xl bg-gradient-to-br from-purple-600/20 to-transparent border-purple-500/20">
-              <h3 className="text-slate-400 text-sm font-medium mb-1">Tasks Done</h3>
-              <div className="text-3xl font-bold text-white flex items-center gap-2">
-                <span className="text-purple-500">✅</span> {currentUser?.tasksCompleted.length || 0}
-              </div>
+            <h1 className="text-5xl md:text-7xl font-black mb-4 tracking-tighter">
+              Earn <span className="bg-clip-text text-transparent bg-gradient-to-r from-yellow-400 to-orange-500">Virtual Fortune</span>
+            </h1>
+            <p className="text-slate-400 text-lg max-w-xl mx-auto mb-10 leading-relaxed font-medium">
+              Complete high-reward tasks, dominate fun games, and build your digital empire one coin at a time.
+            </p>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
+              {[
+                { label: 'Available Coins', value: currentUser?.coins.toLocaleString() || '0', icon: '🪙', color: 'text-yellow-500' },
+                { label: 'Active Tasks', value: tasks.filter(t => t.isActive).length, icon: '⚡', color: 'text-indigo-400' },
+                { label: 'Network Points', value: currentUser?.totalReferrals || 0, icon: '👥', color: 'text-emerald-400' },
+              ].map(stat => (
+                <div key={stat.label} className="glass p-6 rounded-[2rem] border-white/5 card-3d">
+                  <div className="text-3xl mb-2">{stat.icon}</div>
+                  <div className={`text-3xl font-black ${stat.color}`}>{stat.value}</div>
+                  <div className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">{stat.label}</div>
+                </div>
+              ))}
             </div>
           </section>
 
           <AdDisplay codes={settings.adCodes.main} />
 
-          {/* Main Navigation */}
-          <nav className="flex overflow-x-auto gap-2 p-1 bg-slate-900/50 rounded-2xl border border-slate-800 scrollbar-hide">
+          <nav className="sticky top-20 z-40 flex overflow-x-auto gap-2 p-2 glass rounded-[2rem] border-white/5 no-scrollbar mx-auto w-fit max-w-full shadow-2xl backdrop-blur-2xl">
             {[
               { id: 'tasks', label: 'Tasks', icon: '📝' },
-              { id: 'games', label: 'Games', icon: '🎮' },
-              { id: 'bonus', label: 'Daily Bonus', icon: '🎁' },
-              { id: 'referrals', label: 'Referrals', icon: '🤝' },
+              { id: 'games', label: 'Play Zone', icon: '🎮' },
+              { id: 'bonus', label: 'Daily', icon: '🎁' },
+              { id: 'referrals', label: 'Team', icon: '🤝' },
               { id: 'coupons', label: 'Coupons', icon: '🎟️' },
-              { id: 'withdraw', label: 'Withdraw', icon: '💸' },
+              { id: 'withdraw', label: 'Vault', icon: '💸' },
             ].map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex-1 min-w-fit flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
+                className={`flex items-center gap-3 px-8 py-4 rounded-[1.5rem] font-bold transition-all whitespace-nowrap ${
                   activeTab === tab.id 
-                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
-                    : 'text-slate-400 hover:bg-slate-800'
+                    ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-600/30 scale-105' 
+                    : 'text-slate-400 hover:bg-white/5 hover:text-white'
                 }`}
               >
-                <span>{tab.icon}</span>
+                <span className="text-xl">{tab.icon}</span>
                 {tab.label}
               </button>
             ))}
           </nav>
 
-          <div className="min-h-[400px]">
+          <div className="min-h-[500px]">
             {activeTab === 'tasks' && (
-              <div className="space-y-6 animate-in fade-in duration-300">
-                <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-                  <h2 className="text-2xl font-bold">Available Tasks</h2>
-                  <input 
-                    type="text" 
-                    placeholder="Search tasks..." 
-                    className="bg-slate-800 border-slate-700 rounded-xl px-4 py-2 w-full md:w-64"
-                    value={taskSearch}
-                    onChange={(e) => setTaskSearch(e.target.value)}
-                  />
+              <div className="space-y-8 animate-in fade-in duration-500">
+                <div className="flex flex-col md:flex-row gap-6 items-center justify-between">
+                  <h2 className="text-3xl font-black tracking-tight">Earning Opportunities</h2>
+                  <div className="relative w-full md:w-80">
+                    <input 
+                      type="text" 
+                      placeholder="Search jobs..." 
+                      className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-6 py-4 focus:border-indigo-500 outline-none transition-colors"
+                      value={taskSearch}
+                      onChange={(e) => setTaskSearch(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {tasks.filter(t => t.isActive && !currentUser?.tasksCompleted.includes(t.id) && t.title.toLowerCase().includes(taskSearch.toLowerCase())).map(task => (
-                    <div key={task.id} className="glass p-6 rounded-3xl border border-slate-800 hover:border-indigo-500/50 transition-colors flex flex-col">
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="px-3 py-1 bg-slate-800 rounded-full text-xs font-bold text-slate-400 uppercase tracking-wider">{task.category}</span>
-                        <div className="text-yellow-500 font-bold">+{task.reward} 🪙</div>
+                    <div key={task.id} className="glass p-8 rounded-[2.5rem] border-white/5 card-3d flex flex-col">
+                      <div className="flex justify-between items-start mb-6">
+                        <span className="px-4 py-1.5 bg-indigo-600/10 rounded-full text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">{task.category}</span>
+                        <div className="text-yellow-500 font-black text-xl">+{task.reward} 🪙</div>
                       </div>
-                      <h3 className="text-lg font-bold mb-2">{task.title}</h3>
-                      <p className="text-slate-400 text-sm mb-6 flex-1">{task.description}</p>
+                      <h3 className="text-2xl font-bold mb-3 tracking-tight">{task.title}</h3>
+                      <p className="text-slate-500 text-sm mb-8 flex-1 leading-relaxed">{task.description}</p>
                       <button 
                         onClick={() => handleTaskComplete(task.id)}
                         disabled={isTaskPending !== null}
-                        className={`w-full py-3 rounded-xl font-bold transition-all ${
-                          isTaskPending === task.id ? 'bg-slate-700 cursor-not-allowed' : 'bg-slate-800 hover:bg-indigo-600'
+                        className={`w-full py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all ${
+                          isTaskPending === task.id ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 active:scale-95'
                         }`}
                       >
-                        {isTaskPending === task.id ? `Verifying... ${taskTimer}s` : 'Start Task'}
+                        {isTaskPending === task.id ? `Verifying... ${taskTimer}s` : 'Initialize Task'}
                       </button>
                     </div>
                   ))}
                 </div>
-                {tasks.filter(t => t.isActive && !currentUser?.tasksCompleted.includes(t.id)).length === 0 && (
-                  <div className="text-center py-20 text-slate-500 bg-slate-900/20 rounded-3xl border border-dashed border-slate-800">
-                    No tasks available at the moment. Check back later!
-                  </div>
-                )}
                 <AdDisplay codes={settings.adCodes.tasks} />
               </div>
             )}
 
             {activeTab === 'games' && (
-              <div className="space-y-6 animate-in fade-in duration-300">
-                <h2 className="text-2xl font-bold">Earn by Playing</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-10 animate-in fade-in duration-500">
+                <h2 className="text-3xl font-black tracking-tight">Gaming Arcade</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   {INITIAL_GAMES.map(game => (
-                    <div key={game.id} className="glass p-8 rounded-3xl flex flex-col md:flex-row items-center gap-8 border border-slate-800 hover:border-indigo-500/50 transition-all group">
-                      <div className="text-7xl bg-slate-800 w-24 h-24 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">{game.icon}</div>
+                    <div key={game.id} className="glass p-10 rounded-[3rem] flex flex-col md:flex-row items-center gap-10 border-white/5 card-3d group">
+                      <div className="text-8xl bg-slate-900/50 w-32 h-32 rounded-[2rem] flex items-center justify-center group-hover:rotate-12 transition-transform shadow-inner">{game.icon}</div>
                       <div className="flex-1 text-center md:text-left">
-                        <h3 className="text-2xl font-bold mb-2">{game.name}</h3>
-                        <p className="text-slate-400 mb-4">Earn up to <span className="text-yellow-500 font-bold">{game.maxReward} coins</span> per session.</p>
+                        <h3 className="text-3xl font-black mb-3">{game.name}</h3>
+                        <p className="text-slate-500 mb-8 font-medium italic">High stakes fun. Potential: <span className="text-yellow-500 font-bold">{game.maxReward} coins</span></p>
                         <button 
                           onClick={() => setActiveGame(game.id as any)}
-                          className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold"
+                          className="px-10 py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-indigo-600/20 transition-all active:scale-95"
                         >
-                          Play Now
+                          Launch Game
                         </button>
                       </div>
                     </div>
@@ -410,292 +341,276 @@ const App: React.FC = () => {
             )}
 
             {activeTab === 'bonus' && (
-              <div className="max-w-md mx-auto py-12 text-center animate-in fade-in zoom-in-95 duration-300">
-                <div className="text-8xl mb-6">🎁</div>
-                <h2 className="text-3xl font-bold mb-4">Daily Bonus</h2>
-                <p className="text-slate-400 mb-8">Come back every 24 hours to claim your free reward!</p>
-                <div className="glass p-8 rounded-3xl border-2 border-indigo-500/30">
-                  <div className="text-5xl font-black text-yellow-500 mb-2">+{settings.dailyBonusAmount}</div>
-                  <div className="text-slate-400 text-sm mb-6">COINS AVAILABLE</div>
+              <div className="max-w-md mx-auto py-12 text-center animate-in zoom-in-95 duration-500">
+                <div className="floating text-9xl mb-8">🎁</div>
+                <h2 className="text-4xl font-black mb-4">Daily Drops</h2>
+                <p className="text-slate-500 mb-10 font-medium">Free rewards waiting for you every single day. Persistence pays off.</p>
+                <div className="glass p-12 rounded-[3rem] border-2 border-indigo-500/20 shadow-2xl card-3d">
+                  <div className="text-6xl font-black text-yellow-500 mb-2">+{settings.dailyBonusAmount}</div>
+                  <div className="text-slate-500 text-xs font-black uppercase tracking-[0.3em] mb-10">Coins Loot</div>
                   <button 
-                    onClick={handleDailyBonus}
-                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-lg shadow-lg shadow-indigo-500/20"
+                    onClick={() => {
+                        const now = new Date();
+                        const last = currentUser?.lastDailyBonus ? new Date(currentUser.lastDailyBonus) : null;
+                        if (last && now.getTime() - last.getTime() < 24 * 60 * 60 * 1000) {
+                          alert('Bonus on cooldown! Check back later.');
+                          return;
+                        }
+                        updateCurrentUser({
+                          coins: (currentUser?.coins || 0) + settings.dailyBonusAmount,
+                          lastDailyBonus: now.toISOString()
+                        });
+                        alert('Loot secured! Reward added.');
+                    }}
+                    className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 rounded-[2rem] font-black text-xl shadow-2xl shadow-indigo-600/40 active:scale-95 transition-all"
                   >
-                    Claim Reward
+                    Claim Loot
                   </button>
                 </div>
-                <AdDisplay codes={settings.adCodes.daily} className="mt-8" />
               </div>
             )}
 
             {activeTab === 'referrals' && (
-              <div className="space-y-8 animate-in fade-in duration-300">
-                <div className="glass p-8 rounded-3xl text-center max-w-2xl mx-auto">
-                  <h2 className="text-3xl font-bold mb-4">Invite & Earn</h2>
-                  <p className="text-slate-400 mb-8">Share your referral link and earn <span className="text-yellow-500 font-bold">{settings.referralBonusAmount} coins</span> for every friend who joins!</p>
+              <div className="max-w-2xl mx-auto py-12 animate-in fade-in duration-500">
+                <div className="glass p-12 rounded-[3.5rem] text-center border-white/5 shadow-2xl card-3d">
+                  <div className="text-7xl mb-6">👑</div>
+                  <h2 className="text-4xl font-black mb-4">Expand the Empire</h2>
+                  <p className="text-slate-500 mb-10 font-medium leading-relaxed">Commission your network. Earn <span className="text-yellow-500 font-bold">{settings.referralBonusAmount} coins</span> for every citizen you bring to the platform.</p>
                   
-                  <div className="flex flex-col md:flex-row gap-4 items-stretch">
-                    <div className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl px-6 py-4 text-left font-mono text-indigo-400 overflow-hidden text-ellipsis whitespace-nowrap">
+                  <div className="flex flex-col md:flex-row gap-4">
+                    <div className="flex-1 bg-slate-950/50 border border-slate-800 rounded-3xl px-8 py-5 text-left font-mono text-indigo-400 overflow-hidden text-ellipsis whitespace-nowrap shadow-inner">
                       {referralLink}
                     </div>
                     <button 
-                      onClick={() => copyToClipboard(referralLink)}
-                      className={`px-8 py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 ${
-                        copyFeedback ? 'bg-emerald-600 text-white' : 'bg-indigo-600 hover:bg-indigo-700'
+                      onClick={() => {
+                        navigator.clipboard.writeText(referralLink);
+                        setCopyFeedback(true);
+                        setTimeout(() => setCopyFeedback(false), 2000);
+                      }}
+                      className={`px-10 py-5 rounded-3xl font-black uppercase tracking-widest transition-all shadow-2xl ${
+                        copyFeedback ? 'bg-emerald-600 text-white shadow-emerald-600/20' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/30'
                       }`}
                     >
-                      {copyFeedback ? '✓ Copied' : 'Copy Link'}
+                      {copyFeedback ? '✓ Linked' : 'Copy'}
                     </button>
                   </div>
                 </div>
               </div>
             )}
 
-            {activeTab === 'coupons' && (
-              <div className="max-w-md mx-auto py-12 text-center animate-in fade-in duration-300">
-                <h2 className="text-3xl font-bold mb-8">Redeem Coupon</h2>
-                <form 
-                  className="space-y-4"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const input = e.currentTarget.querySelector('input') as HTMLInputElement;
-                    handleCouponRedeem(input.value);
-                    input.value = '';
-                  }}
-                >
-                  <input 
-                    type="text" 
-                    placeholder="Enter coupon code" 
-                    className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 text-center text-xl font-bold uppercase tracking-widest placeholder:normal-case placeholder:tracking-normal"
-                    required
-                  />
-                  <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-lg">
-                    Apply Code
-                  </button>
-                </form>
-              </div>
-            )}
-
             {activeTab === 'withdraw' && (
-              <div className="max-w-md mx-auto py-12 animate-in fade-in duration-300">
-                <h2 className="text-3xl font-bold mb-2 text-center">Withdraw Coins</h2>
-                <p className="text-slate-400 mb-8 text-center">Minimum withdrawal: <span className="text-white font-bold">{settings.minWithdrawal} 🪙</span></p>
-                
-                <form 
-                  className="glass p-8 rounded-3xl space-y-6"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    handleWithdrawal(formData.get('address') as string, Number(formData.get('amount')));
-                    e.currentTarget.reset();
-                  }}
-                >
-                  {!settings.isWithdrawalEnabled && (
-                    <div className="bg-yellow-500/10 border border-yellow-500/20 p-4 rounded-xl text-yellow-500 text-sm font-medium">
-                      ⚠️ Withdrawals are currently disabled by the administrator.
-                    </div>
-                  )}
-                  <div>
-                    <label className="block text-slate-400 text-sm mb-2">Wallet Address (USDT TRC-20 / etc.)</label>
-                    <input name="address" type="text" placeholder="Enter your address" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3" required disabled={!settings.isWithdrawalEnabled} />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 text-sm mb-2">Amount (Coins)</label>
-                    <input name="amount" type="number" min={settings.minWithdrawal} placeholder="0" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3" required disabled={!settings.isWithdrawalEnabled} />
-                  </div>
-                  <button 
-                    type="submit" 
-                    disabled={!settings.isWithdrawalEnabled}
-                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl font-bold text-lg"
+              <div className="max-w-md mx-auto py-12 animate-in fade-in duration-500">
+                <div className="glass p-12 rounded-[3.5rem] border-white/5 shadow-2xl card-3d">
+                  <h2 className="text-3xl font-black mb-2 text-center">Coin Extraction</h2>
+                  <p className="text-slate-500 mb-10 text-center font-bold">Threshold: <span className="text-white">{settings.minWithdrawal} 🪙</span></p>
+                  
+                  <form 
+                    className="space-y-6"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const fd = new FormData(e.currentTarget);
+                      const amount = Number(fd.get('amount'));
+                      if (amount < settings.minWithdrawal) {
+                        alert('Below threshold!'); return;
+                      }
+                      if ((currentUser?.coins || 0) < amount) {
+                        alert('Insufficient funds!'); return;
+                      }
+                      const request: WithdrawalRequest = {
+                        id: Math.random().toString(36).substring(7),
+                        ip: ip,
+                        amount,
+                        walletAddress: fd.get('address') as string,
+                        status: 'pending',
+                        createdAt: new Date().toISOString()
+                      };
+                      setWithdrawals([request, ...withdrawals]);
+                      StorageService.setWithdrawals([request, ...withdrawals]);
+                      updateCurrentUser({ coins: (currentUser?.coins || 0) - amount });
+                      e.currentTarget.reset();
+                      alert('Extraction request queued.');
+                    }}
                   >
-                    Request Withdrawal
-                  </button>
-                </form>
+                    {!settings.isWithdrawalEnabled && (
+                      <div className="bg-orange-500/10 border border-orange-500/20 p-5 rounded-3xl text-orange-400 text-xs font-black uppercase tracking-widest text-center">
+                        Vault Lock Engaged
+                      </div>
+                    )}
+                    <div className="space-y-4">
+                      <input name="address" type="text" placeholder="Wallet Address (0x...)" className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 transition-colors" required disabled={!settings.isWithdrawalEnabled} />
+                      <input name="amount" type="number" min={settings.minWithdrawal} placeholder="Amount to Extract" className="w-full bg-slate-900/50 border border-slate-800 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 transition-colors" required disabled={!settings.isWithdrawalEnabled} />
+                    </div>
+                    <button 
+                      type="submit" 
+                      disabled={!settings.isWithdrawalEnabled}
+                      className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-600 rounded-[2rem] font-black uppercase tracking-[0.2em] shadow-2xl shadow-indigo-600/30 active:scale-95 transition-all"
+                    >
+                      Extract Funds
+                    </button>
+                  </form>
+                </div>
               </div>
             )}
           </div>
         </div>
       ) : (
-        /* Admin View */
-        <div className="space-y-8 animate-in fade-in duration-300">
-          <div className="flex justify-between items-center">
-            <h1 className="text-3xl font-bold">Administrator Panel</h1>
-            <button onClick={() => setView('user')} className="text-slate-400 hover:text-white flex items-center gap-2">
-              <span>←</span> Return to App
-            </button>
-          </div>
-
-          <nav className="flex gap-2 p-1 bg-slate-900 rounded-2xl border border-slate-800 overflow-x-auto">
-            {['dashboard', 'users', 'tasks', 'coupons', 'withdrawals', 'settings'].map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveAdminTab(tab as any)}
-                className={`px-6 py-2 rounded-xl font-semibold capitalize whitespace-nowrap ${
-                  activeAdminTab === tab ? 'bg-indigo-600' : 'text-slate-400 hover:bg-slate-800'
-                }`}
-              >
-                {tab}
-              </button>
-            ))}
-          </nav>
-
-          <div className="min-h-[500px]">
+        <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-10 animate-in slide-in-from-left duration-500">
+          <aside className="glass p-6 rounded-[2.5rem] h-fit border-white/5 shadow-2xl sticky top-28">
+            <div className="px-4 py-4 mb-6">
+              <div className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-1">System Status</div>
+              <div className="text-emerald-400 font-bold flex items-center gap-2">
+                <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span> Operational
+              </div>
+            </div>
+            <div className="space-y-1">
+              {(['dashboard', 'users', 'tasks', 'coupons', 'withdrawals', 'settings'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveAdminTab(tab)}
+                  className={`w-full text-left px-5 py-4 rounded-2xl font-bold capitalize transition-all ${
+                    activeAdminTab === tab ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'text-slate-400 hover:bg-white/5'
+                  }`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setView('user')} className="w-full mt-10 text-red-400 hover:bg-red-500/10 px-5 py-4 rounded-2xl font-bold transition-all">Close Terminal</button>
+          </aside>
+          
+          <section className="space-y-8 pb-20">
+            {activeAdminTab === 'settings' && (
+              <div className="glass p-12 rounded-[3rem] space-y-10 border-white/5 shadow-2xl animate-in fade-in duration-500">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-8">
+                  <h2 className="text-3xl font-black tracking-tight">System Configuration</h2>
+                  <button 
+                    onClick={handleSettingsSave}
+                    className="px-10 py-4 bg-emerald-600 hover:bg-emerald-700 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-emerald-600/20 transition-all active:scale-95"
+                  >
+                    Commit Changes
+                  </button>
+                </div>
+                
+                <div className="grid md:grid-cols-2 gap-12">
+                  <div className="space-y-6">
+                    <h3 className="text-indigo-400 font-black uppercase tracking-widest text-xs">Core Rewards</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-slate-500 text-[10px] font-bold uppercase tracking-widest block mb-2">Daily Bonus (Coins)</label>
+                        <input type="number" value={pendingSettings.dailyBonusAmount} onChange={(e) => setPendingSettings({...pendingSettings, dailyBonusAmount: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 font-mono focus:border-indigo-500 outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-slate-500 text-[10px] font-bold uppercase tracking-widest block mb-2">Referral Reward (Coins)</label>
+                        <input type="number" value={pendingSettings.referralBonusAmount} onChange={(e) => setPendingSettings({...pendingSettings, referralBonusAmount: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 font-mono focus:border-indigo-500 outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-slate-500 text-[10px] font-bold uppercase tracking-widest block mb-2">Min. Withdrawal Threshold</label>
+                        <input type="number" value={pendingSettings.minWithdrawal} onChange={(e) => setPendingSettings({...pendingSettings, minWithdrawal: Number(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 font-mono focus:border-indigo-500 outline-none" />
+                      </div>
+                      <div className="flex items-center gap-4 pt-4">
+                        <div 
+                          onClick={() => setPendingSettings({...pendingSettings, isWithdrawalEnabled: !pendingSettings.isWithdrawalEnabled})}
+                          className={`w-14 h-8 rounded-full relative transition-all cursor-pointer ${pendingSettings.isWithdrawalEnabled ? 'bg-indigo-600' : 'bg-slate-800'}`}
+                        >
+                          <div className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all shadow-md ${pendingSettings.isWithdrawalEnabled ? 'left-7' : 'left-1'}`} />
+                        </div>
+                        <span className="text-sm font-bold uppercase tracking-widest">Global Payouts</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-8">
+                    <h3 className="text-indigo-400 font-black uppercase tracking-widest text-xs">Multi-Ad Placement</h3>
+                    {Object.keys(pendingSettings.adCodes).map(section => (
+                      <div key={section} className="p-6 bg-slate-950/50 rounded-[2rem] border border-slate-800 space-y-4 shadow-inner">
+                        <div className="flex justify-between items-center">
+                          <label className="text-slate-400 font-black uppercase tracking-widest text-[10px]">{section} Section</label>
+                          <button onClick={() => addAdSlot(section)} className="bg-indigo-600 text-[9px] px-3 py-1.5 rounded-xl font-black uppercase tracking-widest hover:bg-indigo-500 transition-colors">Add Slot</button>
+                        </div>
+                        {(pendingSettings.adCodes[section] || []).map((code, idx) => (
+                          <div key={idx} className="relative group">
+                            <textarea 
+                              value={code} 
+                              onChange={(e) => {
+                                const newCodes = [...(pendingSettings.adCodes[section] || [])];
+                                newCodes[idx] = e.target.value;
+                                setPendingSettings({...pendingSettings, adCodes: {...pendingSettings.adCodes, [section]: newCodes}});
+                              }}
+                              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-[10px] font-mono h-24 focus:border-indigo-500 outline-none shadow-sm"
+                              placeholder="<div id='ad-code'></div>"
+                            />
+                            <button onClick={() => removeAdSlot(section, idx)} className="absolute -top-2 -right-2 bg-red-600 text-[8px] p-1.5 rounded-full hover:scale-110 transition-transform shadow-lg">✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {activeAdminTab === 'dashboard' && (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {[
-                  { label: 'Total Users', value: users.length, color: 'text-blue-500' },
-                  { label: 'Total Coins', value: users.reduce((acc, u) => acc + u.coins, 0), color: 'text-yellow-500' },
-                  { label: 'Pending Withdraws', value: withdrawals.filter(w => w.status === 'pending').length, color: 'text-orange-500' },
-                  { label: 'Tasks Completed', value: users.reduce((acc, u) => acc + u.tasksCompleted.length, 0), color: 'text-emerald-500' },
+              <div className="grid md:grid-cols-4 gap-6 animate-in fade-in duration-500">
+                 {[
+                  { label: 'Network Population', value: users.length, color: 'text-indigo-400' },
+                  { label: 'Circulating Coins', value: users.reduce((acc, u) => acc + (u.coins || 0), 0).toLocaleString(), color: 'text-yellow-500' },
+                  { label: 'Vault Queue', value: withdrawals.filter(w => w.status === 'pending').length, color: 'text-orange-400' },
+                  { label: 'Operation Volume', value: users.reduce((acc, u) => acc + (u.tasksCompleted?.length || 0), 0), color: 'text-emerald-400' },
                 ].map(stat => (
-                  <div key={stat.label} className="glass p-6 rounded-3xl">
-                    <div className="text-slate-400 text-sm mb-1">{stat.label}</div>
-                    <div className={`text-3xl font-bold ${stat.color}`}>{stat.value.toLocaleString()}</div>
+                  <div key={stat.label} className="glass p-8 rounded-[2.5rem] border-white/5 shadow-xl">
+                    <div className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em] mb-2">{stat.label}</div>
+                    <div className={`text-4xl font-black ${stat.color}`}>{stat.value}</div>
                   </div>
                 ))}
               </div>
             )}
-
-            {activeAdminTab === 'users' && (
-              <div className="glass rounded-3xl overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-900/50">
-                    <tr>
-                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">IP Address</th>
-                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Coins</th>
-                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Referrals</th>
-                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Joined</th>
-                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {users.map(u => (
-                      <tr key={u.ip} className="hover:bg-slate-800/50 transition-colors">
-                        <td className="px-6 py-4 font-mono text-indigo-400">{u.ip}</td>
-                        <td className="px-6 py-4 font-bold">{u.coins.toLocaleString()}</td>
-                        <td className="px-6 py-4">{u.totalReferrals}</td>
-                        <td className="px-6 py-4 text-slate-400 text-sm">{new Date(u.joinedAt).toLocaleDateString()}</td>
-                        <td className="px-6 py-4">
-                          <span className={`px-2 py-1 rounded text-xs font-bold ${u.isBlocked ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
-                            {u.isBlocked ? 'Blocked' : 'Active'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {activeAdminTab === 'settings' && (
-              <div className="max-w-2xl mx-auto glass p-8 rounded-3xl space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-slate-400 text-sm mb-2">Daily Bonus Amount</label>
-                    <input 
-                      type="number" 
-                      className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2"
-                      value={pendingSettings.dailyBonusAmount}
-                      onChange={(e) => setPendingSettings({...pendingSettings, dailyBonusAmount: Number(e.target.value)})}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 text-sm mb-2">Referral Bonus Amount</label>
-                    <input 
-                      type="number" 
-                      className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2"
-                      value={pendingSettings.referralBonusAmount}
-                      onChange={(e) => setPendingSettings({...pendingSettings, referralBonusAmount: Number(e.target.value)})}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-400 text-sm mb-2">Min. Withdrawal</label>
-                    <input 
-                      type="number" 
-                      className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2"
-                      value={pendingSettings.minWithdrawal}
-                      onChange={(e) => setPendingSettings({...pendingSettings, minWithdrawal: Number(e.target.value)})}
-                    />
-                  </div>
-                  <div className="flex items-center gap-4 pt-8">
-                    <input 
-                      type="checkbox" 
-                      id="enable-withdraw"
-                      checked={pendingSettings.isWithdrawalEnabled}
-                      onChange={(e) => setPendingSettings({...pendingSettings, isWithdrawalEnabled: e.target.checked})}
-                    />
-                    <label htmlFor="enable-withdraw" className="text-sm font-bold">Enable Withdrawals</label>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h3 className="font-bold border-b border-slate-800 pb-2">Advertising Codes (HTML)</h3>
-                  {Object.keys(pendingSettings.adCodes).map(key => (
-                    <div key={key}>
-                      <label className="block text-slate-400 text-sm mb-2 capitalize">{key} Ad Slots (one per line)</label>
-                      <textarea 
-                        className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2 h-24 font-mono text-xs"
-                        placeholder="<div>...</div>"
-                        value={pendingSettings.adCodes[key].join('\n')}
-                        onChange={(e) => {
-                          const codes = e.target.value.split('\n').filter(l => l.trim() !== '');
-                          setPendingSettings({
-                            ...pendingSettings,
-                            adCodes: { ...pendingSettings.adCodes, [key]: codes }
-                          });
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <button 
-                  onClick={() => {
-                    StorageService.setSettings(pendingSettings);
-                    setSettings(pendingSettings);
-                    alert('Settings saved successfully!');
-                  }}
-                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 rounded-xl font-bold"
-                >
-                  Save Changes
-                </button>
-              </div>
-            )}
-          </div>
+          </section>
         </div>
       )}
 
-      {/* Game Modals */}
       {activeGame === 'memory' && (
         <MemoryGame 
           gameType="memory" 
-          onComplete={handleGameComplete} 
+          onComplete={(score, time) => {
+            if (currentUser) {
+              const reward = Math.min(10 + Math.floor(time / 5), 50);
+              updateCurrentUser({ coins: currentUser.coins + reward });
+              alert(`Game complete! Reward: ${reward} coins.`);
+            }
+            setActiveGame(null);
+          }} 
           onClose={() => setActiveGame(null)} 
         />
       )}
       {activeGame === 'clicker' && (
         <ClickerGame 
           gameType="clicker" 
-          onComplete={handleGameComplete} 
+          onComplete={(score) => {
+            if (currentUser) {
+              const reward = Math.min(score, 50);
+              updateCurrentUser({ coins: currentUser.coins + reward });
+              alert(`Game over! You clicked ${score} times. Reward: ${reward} coins.`);
+            }
+            setActiveGame(null);
+          }} 
           onClose={() => setActiveGame(null)} 
         />
       )}
 
-      {/* Welcome Modal */}
       {showWelcome && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="glass max-w-sm w-full p-8 rounded-3xl text-center space-y-6">
-            <div className="text-6xl">👋</div>
-            <h2 className="text-2xl font-bold">Welcome to CoinEarn!</h2>
-            <p className="text-slate-400">Start completing tasks and playing games to earn real crypto rewards.</p>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-500">
+          <div className="glass max-w-md w-full p-12 rounded-[3.5rem] border-white/10 text-center shadow-2xl card-3d">
+            <div className="floating text-8xl mb-8">✨</div>
+            <h2 className="text-4xl font-black mb-4 tracking-tighter">Enter the Pro Era</h2>
+            <p className="text-slate-400 mb-10 font-medium text-lg leading-relaxed">Welcome to CoinEarn Pro. Your journey from enthusiast to digital elite starts now.</p>
             <button 
               onClick={() => {
                 setShowWelcome(false);
                 StorageService.setWelcomed(ip);
               }}
-              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold"
+              className="w-full py-5 bg-indigo-600 hover:bg-indigo-700 rounded-[2rem] font-black text-xl uppercase tracking-widest shadow-2xl shadow-indigo-600/30 active:scale-95 transition-all"
             >
-              Get Started
+              Begin Session
             </button>
           </div>
         </div>
