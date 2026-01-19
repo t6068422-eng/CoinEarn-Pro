@@ -54,7 +54,7 @@ export interface AppSettings {
   referralBonusAmount: number;
   minWithdrawal: number;
   isWithdrawalEnabled: boolean;
-  adCodes: Record<string, string>;
+  adCodes: Record<string, string[]>; // Changed from string to string[]
 }
 
 export interface AdminStats {

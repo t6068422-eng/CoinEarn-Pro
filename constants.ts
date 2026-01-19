@@ -21,10 +21,10 @@ export const INITIAL_SETTINGS: AppSettings = {
   minWithdrawal: 1000,
   isWithdrawalEnabled: false,
   adCodes: {
-    main: '',
-    tasks: '',
-    games: '',
-    daily: ''
+    main: [],
+    tasks: [],
+    games: [],
+    daily: []
   }
 };
 
