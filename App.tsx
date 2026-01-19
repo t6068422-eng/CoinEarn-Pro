@@ -260,9 +260,10 @@ const App: React.FC = () => {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    setWithdrawals(prev => [...prev, newRequest]);
+    const updated = [...withdrawals, newRequest];
+    setWithdrawals(updated);
     setCurrentUser(prev => prev ? ({ ...prev, coins: prev.coins - amount }) : null);
-    StorageService.setWithdrawals([...withdrawals, newRequest]);
+    StorageService.setWithdrawals(updated);
     alert('Withdrawal request submitted!');
   };
 
@@ -283,10 +284,15 @@ const App: React.FC = () => {
     const updated = withdrawals.map(w => {
       if (w.id === id) {
         if (status === 'rejected') {
-          const user = users.find(u => u.ip === w.ip);
-          if (user) {
-            user.coins += w.amount;
-            StorageService.setUsers([...users]);
+          const allUsers = StorageService.getUsers();
+          const userIdx = allUsers.findIndex(u => u.ip === w.ip);
+          if (userIdx !== -1) {
+            allUsers[userIdx].coins += w.amount;
+            StorageService.setUsers(allUsers);
+            setUsers(allUsers);
+            if (currentUser && currentUser.ip === w.ip) {
+              setCurrentUser({ ...allUsers[userIdx] });
+            }
           }
         }
         return { ...w, status };
@@ -535,13 +541,14 @@ const App: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-8">
           <aside className="glass p-4 rounded-3xl h-fit">
             {(['dashboard', 'users', 'tasks', 'coupons', 'withdrawals', 'settings'] as const).map(tab => (
-              <button key={tab} onClick={() => setActiveAdminTab(tab)} className={`w-full text-left px-4 py-3 rounded-xl font-medium ${activeAdminTab === tab ? 'bg-indigo-600' : ''}`}>
+              <button key={tab} onClick={() => setActiveAdminTab(tab)} className={`w-full text-left px-4 py-3 rounded-xl font-medium transition-all ${activeAdminTab === tab ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>
                 {tab.charAt(0).toUpperCase() + tab.slice(1)}
               </button>
             ))}
-            <button onClick={() => { setIsAdminAuth(false); setView('user'); }} className="w-full text-left px-4 py-3 text-red-400 mt-6">Exit Admin</button>
+            <button onClick={() => { setIsAdminAuth(false); setView('user'); }} className="w-full text-left px-4 py-3 text-red-400 mt-6 font-medium">Exit Admin</button>
           </aside>
-          <section className="space-y-8">
+          
+          <section className="space-y-8 pb-20">
             {activeAdminTab === 'dashboard' && (
               <div className="grid md:grid-cols-4 gap-4">
                 <div className="glass p-6 rounded-3xl"><div className="text-slate-500 text-sm mb-1 uppercase">Total Users</div><div className="text-3xl font-black">{users.length}</div></div>
@@ -550,11 +557,198 @@ const App: React.FC = () => {
                 <div className="glass p-6 rounded-3xl"><div className="text-slate-500 text-sm mb-1 uppercase">Tasks Done</div><div className="text-3xl font-black text-emerald-500">{users.reduce((acc, u) => acc + u.tasksCompleted.length, 0)}</div></div>
               </div>
             )}
+
             {activeAdminTab === 'users' && (
-               <div className="glass rounded-3xl overflow-hidden">
-                <table className="w-full text-left"><thead className="bg-slate-800/50"><tr><th className="p-4">IP</th><th className="p-4">Coins</th><th className="p-4">Actions</th></tr></thead>
-                  <tbody>{users.map(u => (<tr key={u.ip}><td className="p-4 font-mono text-xs">{u.ip}</td><td className="p-4 font-bold">{u.coins}</td><td className="p-4"><button onClick={() => blockUser(u.ip)} className={`px-4 py-2 rounded-lg text-xs font-bold ${u.isBlocked ? 'bg-emerald-600' : 'bg-red-600'}`}>{u.isBlocked ? 'UNBLOCK' : 'BLOCK'}</button></td></tr>))}</tbody>
+              <div className="glass rounded-3xl overflow-hidden">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-800/50">
+                    <tr><th className="p-4">IP</th><th className="p-4">Coins</th><th className="p-4">Joined</th><th className="p-4">Actions</th></tr>
+                  </thead>
+                  <tbody>
+                    {users.map(u => (
+                      <tr key={u.ip} className="border-t border-slate-800/50">
+                        <td className="p-4 font-mono text-xs">{u.ip}</td>
+                        <td className="p-4 font-bold text-yellow-500">{u.coins}</td>
+                        <td className="p-4 text-xs text-slate-500">{new Date(u.joinedAt).toLocaleDateString()}</td>
+                        <td className="p-4">
+                          <button onClick={() => blockUser(u.ip)} className={`px-4 py-2 rounded-lg text-xs font-bold ${u.isBlocked ? 'bg-emerald-600' : 'bg-red-600'}`}>
+                            {u.isBlocked ? 'UNBLOCK' : 'BLOCK'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
+              </div>
+            )}
+
+            {activeAdminTab === 'tasks' && (
+              <div className="space-y-6">
+                <div className="glass p-6 rounded-3xl">
+                  <h3 className="text-lg font-bold mb-4">Add New Task</h3>
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.currentTarget);
+                    const newTask: Task = {
+                      id: Math.random().toString(36).substring(7),
+                      title: fd.get('title') as string,
+                      reward: parseInt(fd.get('reward') as string),
+                      link: fd.get('link') as string,
+                      category: fd.get('category') as string,
+                      description: fd.get('description') as string,
+                      isActive: true
+                    };
+                    saveTasks([...tasks, newTask]);
+                    e.currentTarget.reset();
+                  }} className="grid md:grid-cols-2 gap-4">
+                    <input name="title" placeholder="Title" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    <input name="reward" type="number" placeholder="Reward Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    <input name="link" placeholder="Task Link" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    <select name="category" className="bg-slate-900 rounded-xl p-3 border border-slate-800">
+                      {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                    <textarea name="description" placeholder="Description" className="md:col-span-2 bg-slate-900 rounded-xl p-3 border border-slate-800 h-20" />
+                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 rounded-xl font-bold">ADD TASK</button>
+                  </form>
+                </div>
+                <div className="glass rounded-3xl overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-800/50"><tr><th className="p-4">Task</th><th className="p-4">Reward</th><th className="p-4">Status</th><th className="p-4">Actions</th></tr></thead>
+                    <tbody>
+                      {tasks.map(t => (
+                        <tr key={t.id} className="border-t border-slate-800/50">
+                          <td className="p-4 text-sm font-medium">{t.title}</td>
+                          <td className="p-4 font-bold text-yellow-500">🪙 {t.reward}</td>
+                          <td className="p-4">
+                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${t.isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                              {t.isActive ? 'ACTIVE' : 'INACTIVE'}
+                            </span>
+                          </td>
+                          <td className="p-4 flex gap-2">
+                            <button onClick={() => saveTasks(tasks.map(tk => tk.id === t.id ? { ...tk, isActive: !tk.isActive } : tk))} className="text-xs bg-slate-800 px-3 py-1 rounded-lg">Toggle</button>
+                            <button onClick={() => saveTasks(tasks.filter(tk => tk.id !== t.id))} className="text-xs bg-red-900/50 text-red-400 px-3 py-1 rounded-lg">Del</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeAdminTab === 'coupons' && (
+              <div className="space-y-6">
+                <div className="glass p-6 rounded-3xl">
+                  <h3 className="text-lg font-bold mb-4">Create Coupon</h3>
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const fd = new FormData(e.currentTarget);
+                    const newCoupon: Coupon = {
+                      id: Math.random().toString(36).substring(7),
+                      code: (fd.get('code') as string).toUpperCase(),
+                      reward: parseInt(fd.get('reward') as string),
+                      usageLimit: parseInt(fd.get('limit') as string),
+                      expiryDate: fd.get('expiry') as string,
+                      usedCount: 0
+                    };
+                    saveCoupons([...coupons, newCoupon]);
+                    e.currentTarget.reset();
+                  }} className="grid md:grid-cols-2 gap-4">
+                    <input name="code" placeholder="CODE123" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 font-mono" />
+                    <input name="reward" type="number" placeholder="Reward Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    <input name="limit" type="number" placeholder="Usage Limit" required className="bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    <input name="expiry" type="date" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-white" />
+                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 rounded-xl font-bold">CREATE COUPON</button>
+                  </form>
+                </div>
+                <div className="glass rounded-3xl overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-800/50"><tr><th className="p-4">Code</th><th className="p-4">Reward</th><th className="p-4">Uses</th><th className="p-4">Actions</th></tr></thead>
+                    <tbody>
+                      {coupons.map(c => (
+                        <tr key={c.id} className="border-t border-slate-800/50">
+                          <td className="p-4 font-mono font-bold">{c.code}</td>
+                          <td className="p-4 text-yellow-500">{c.reward}</td>
+                          <td className="p-4 text-xs">{c.usedCount} / {c.usageLimit}</td>
+                          <td className="p-4">
+                            <button onClick={() => saveCoupons(coupons.filter(cp => cp.id !== c.id))} className="text-xs bg-red-900/50 text-red-400 px-3 py-1 rounded-lg">Del</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {activeAdminTab === 'withdrawals' && (
+              <div className="glass rounded-3xl overflow-hidden">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-800/50"><tr><th className="p-4">User IP</th><th className="p-4">Amount</th><th className="p-4">Wallet</th><th className="p-4">Status</th><th className="p-4">Actions</th></tr></thead>
+                  <tbody>
+                    {withdrawals.sort((a,b) => a.status === 'pending' ? -1 : 1).map(w => (
+                      <tr key={w.id} className="border-t border-slate-800/50">
+                        <td className="p-4 text-xs font-mono">{w.ip}</td>
+                        <td className="p-4 font-bold text-orange-400">{w.amount}</td>
+                        <td className="p-4 text-[10px] font-mono">{w.walletAddress}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded-full text-[9px] font-bold uppercase ${w.status === 'pending' ? 'bg-orange-500/20 text-orange-400' : w.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {w.status}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          {w.status === 'pending' && (
+                            <div className="flex gap-2">
+                              <button onClick={() => updateWithdrawalStatus(w.id, 'approved')} className="bg-emerald-600 text-[10px] px-2 py-1 rounded">Approve</button>
+                              <button onClick={() => updateWithdrawalStatus(w.id, 'rejected')} className="bg-red-600 text-[10px] px-2 py-1 rounded">Reject</button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {activeAdminTab === 'settings' && (
+              <div className="glass p-8 rounded-3xl space-y-8">
+                <div className="grid md:grid-cols-2 gap-8">
+                  <div className="space-y-4">
+                    <h3 className="font-bold border-b border-slate-800 pb-2">Earning Settings</h3>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Daily Bonus Amount</label>
+                      <input type="number" value={settings.dailyBonusAmount} onChange={(e) => saveSettings({ ...settings, dailyBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Referral Bonus Amount</label>
+                      <input type="number" value={settings.referralBonusAmount} onChange={(e) => saveSettings({ ...settings, referralBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">Min Withdrawal</label>
+                      <input type="number" value={settings.minWithdrawal} onChange={(e) => saveSettings({ ...settings, minWithdrawal: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
+                    </div>
+                    <div className="flex items-center gap-3 pt-4">
+                      <input type="checkbox" checked={settings.isWithdrawalEnabled} onChange={(e) => saveSettings({ ...settings, isWithdrawalEnabled: e.target.checked })} className="w-5 h-5 rounded" id="wd-enable" />
+                      <label htmlFor="wd-enable" className="font-bold">Enable Withdrawals</label>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <h3 className="font-bold border-b border-slate-800 pb-2">Monetization Ad Codes</h3>
+                    {Object.keys(settings.adCodes).map(key => (
+                      <div key={key}>
+                        <label className="text-xs text-slate-500 block mb-1 uppercase">{key} Ad Slot (HTML)</label>
+                        <textarea 
+                          value={settings.adCodes[key]} 
+                          onChange={(e) => saveSettings({ ...settings, adCodes: { ...settings.adCodes, [key]: e.target.value } })}
+                          className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-xs font-mono h-20"
+                          placeholder="<script>...</script>"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
           </section>
