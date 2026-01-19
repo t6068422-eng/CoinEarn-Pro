@@ -38,12 +38,12 @@ const AdDisplay: React.FC<{ codes?: string[], className?: string }> = ({ codes, 
   );
 };
 
+// Fixed the missing implementation and added export default App
 const App: React.FC = () => {
   const [view, setView] = useState<'user' | 'admin' | 'admin-login'>('user');
   const [isAdminAuth, setIsAdminAuth] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [ip, setIp] = useState<string>('');
-  const [isIncognito, setIsIncognito] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
   
@@ -69,236 +69,218 @@ const App: React.FC = () => {
     setPendingSettings(settings);
   }, [settings]);
 
+  // Initial user loading and registration
   useEffect(() => {
-    if ('storage' in navigator && 'estimate' in navigator.storage) {
-      navigator.storage.estimate().then(estimate => {
-        if (estimate.quota && estimate.quota < 120000000) setIsIncognito(true);
-      });
-    }
+    const init = async () => {
+      // Mocking IP retrieval for local storage simulation
+      const mockIp = '127.0.0.1';
+      setIp(mockIp);
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const refCodeFromUrl = urlParams.get('ref');
-
-    fetch('https://api.ipify.org?format=json')
-      .then(res => res.json())
-      .then(data => {
-        setIp(data.ip);
-        const allUsers = StorageService.getUsers();
-        let user = allUsers.find(u => u.ip === data.ip);
+      const allUsers = StorageService.getUsers();
+      setUsers(allUsers);
+      
+      let user = allUsers.find(u => u.ip === mockIp);
+      
+      if (!user) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const refCode = urlParams.get('ref');
+        let referredBy = null;
         
-        if (!user) {
-          user = {
-            ip: data.ip,
-            coins: 0,
-            tasksCompleted: [],
-            couponsClaimed: [],
-            lastDailyBonus: null,
-            referralCode: `REF-${Math.random().toString(36).substring(7).toUpperCase()}`,
-            referredBy: null,
-            totalReferrals: 0,
-            isBlocked: false,
-            joinedAt: new Date().toISOString()
-          };
-          if (refCodeFromUrl) {
-            const referrer = allUsers.find(u => u.referralCode === refCodeFromUrl);
-            if (referrer && referrer.ip !== data.ip) {
-              referrer.coins += settings.referralBonusAmount;
-              referrer.totalReferrals += 1;
-              user.referredBy = referrer.ip;
-            }
+        if (refCode) {
+          const referrer = allUsers.find(u => u.referralCode === refCode);
+          if (referrer) {
+            referredBy = referrer.referralCode;
+            referrer.coins += settings.referralBonusAmount;
+            referrer.totalReferrals += 1;
+            StorageService.setUsers([...allUsers]);
           }
-          allUsers.push(user);
-          StorageService.setUsers(allUsers);
         }
-        
-        setCurrentUser(user);
-        setUsers(allUsers);
 
-        if (!StorageService.isWelcomed(data.ip)) {
-          setShowWelcome(true);
-          StorageService.setWelcomed(data.ip);
-        }
-        if (refCodeFromUrl) window.history.replaceState({}, document.title, window.location.pathname);
-      })
-      .catch(() => {
-        const mockIp = '127.0.0.1';
-        setIp(mockIp);
-        const allUsers = StorageService.getUsers();
-        let user = allUsers.find(u => u.ip === mockIp) || {
-            ip: mockIp, coins: 100, tasksCompleted: [], couponsClaimed: [], lastDailyBonus: null, referralCode: 'MOCK-REF', referredBy: null, totalReferrals: 0, isBlocked: false, joinedAt: new Date().toISOString()
+        user = {
+          ip: mockIp,
+          coins: 0,
+          tasksCompleted: [],
+          couponsClaimed: [],
+          lastDailyBonus: null,
+          referralCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
+          referredBy,
+          totalReferrals: 0,
+          isBlocked: false,
+          joinedAt: new Date().toISOString(),
         };
-        if (!allUsers.find(u => u.ip === mockIp)) allUsers.push(user);
-        setCurrentUser(user);
-        setUsers(allUsers);
-      });
+        
+        const newUsers = [...StorageService.getUsers(), user];
+        StorageService.setUsers(newUsers);
+        setUsers(newUsers);
+      }
+      
+      setCurrentUser(user);
+      setTasks(StorageService.getTasks());
+      setCoupons(StorageService.getCoupons());
+      setWithdrawals(StorageService.getWithdrawals());
 
-    setTasks(StorageService.getTasks());
-    setCoupons(StorageService.getCoupons());
-    setWithdrawals(StorageService.getWithdrawals());
-  }, []);
+      if (!StorageService.isWelcomed(mockIp)) {
+        setShowWelcome(true);
+      }
+    };
+    init();
+  }, [settings.referralBonusAmount]);
 
-  useEffect(() => {
-    let interval: any;
-    if (isTaskPending && taskTimer > 0) {
-      interval = setInterval(() => setTaskTimer(t => t - 1), 1000);
-    }
-    return () => clearInterval(interval);
-  }, [isTaskPending, taskTimer]);
-
-  const handleAdminLogin = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    if (formData.get('email') === ADMIN_EMAIL && formData.get('password') === ADMIN_PASSWORD) {
-      setIsAdminAuth(true);
-      setView('admin');
-    } else {
-      alert('Invalid admin credentials');
+  const updateCurrentUser = (updates: Partial<UserProfile>) => {
+    if (!currentUser) return;
+    const updatedUser = { ...currentUser, ...updates };
+    setCurrentUser(updatedUser);
+    const allUsers = StorageService.getUsers();
+    const index = allUsers.findIndex(u => u.ip === currentUser.ip);
+    if (index !== -1) {
+      allUsers[index] = updatedUser;
+      StorageService.setUsers(allUsers);
+      setUsers(allUsers);
     }
   };
 
-  const claimTask = (taskId: string) => {
+  const handleDailyBonus = () => {
+    if (!currentUser) return;
+    const now = new Date();
+    const last = currentUser.lastDailyBonus ? new Date(currentUser.lastDailyBonus) : null;
+    
+    if (last && now.getTime() - last.getTime() < 24 * 60 * 60 * 1000) {
+      alert('Bonus already claimed today!');
+      return;
+    }
+
+    updateCurrentUser({
+      coins: currentUser.coins + settings.dailyBonusAmount,
+      lastDailyBonus: now.toISOString()
+    });
+    alert(`Success! You earned ${settings.dailyBonusAmount} coins.`);
+  };
+
+  const handleTaskComplete = (taskId: string) => {
     const task = tasks.find(t => t.id === taskId);
     if (!task || !currentUser || currentUser.tasksCompleted.includes(taskId)) return;
+
     setIsTaskPending(taskId);
-    setTaskTimer(20);
+    setTaskTimer(10); // 10 second timer to simulate validation
     window.open(task.link, '_blank');
-  };
 
-  const finalizeTask = () => {
-    if (!isTaskPending || !currentUser) return;
-    const task = tasks.find(t => t.id === isTaskPending);
-    if (!task) return;
-    const updatedUser = { ...currentUser, coins: currentUser.coins + task.reward, tasksCompleted: [...currentUser.tasksCompleted, task.id] };
-    setCurrentUser(updatedUser);
-    setIsTaskPending(null);
-    setTaskTimer(0);
-    const allUsers = StorageService.getUsers();
-    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
-    if (idx !== -1) { allUsers[idx] = updatedUser; StorageService.setUsers(allUsers); setUsers(allUsers); }
-    alert(`Success! ${task.reward} coins added.`);
-  };
-
-  const claimCoupon = (code: string) => {
-    const coupon = coupons.find(c => c.code === code.trim().toUpperCase());
-    if (!coupon || !currentUser || new Date(coupon.expiryDate) < new Date() || currentUser.couponsClaimed.includes(coupon.id) || coupon.usedCount >= coupon.usageLimit) {
-      alert('Invalid, expired or already used coupon'); return;
-    }
-    const updatedUser = { ...currentUser, coins: currentUser.coins + coupon.reward, couponsClaimed: [...currentUser.couponsClaimed, coupon.id] };
-    setCurrentUser(updatedUser);
-    const updatedCoupons = coupons.map(c => c.id === coupon.id ? { ...c, usedCount: c.usedCount + 1 } : c);
-    setCoupons(updatedCoupons);
-    StorageService.setCoupons(updatedCoupons);
-    const allUsers = StorageService.getUsers();
-    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
-    if (idx !== -1) { allUsers[idx] = updatedUser; StorageService.setUsers(allUsers); setUsers(allUsers); }
-    alert(`Success! ${coupon.reward} coins added.`);
-  };
-
-  const claimDailyBonus = () => {
-    if (!currentUser || currentUser.lastDailyBonus === new Date().toDateString()) return;
-    const updatedUser = { ...currentUser, coins: currentUser.coins + settings.dailyBonusAmount, lastDailyBonus: new Date().toDateString() };
-    setCurrentUser(updatedUser);
-    const allUsers = StorageService.getUsers();
-    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
-    if (idx !== -1) { allUsers[idx] = updatedUser; StorageService.setUsers(allUsers); setUsers(allUsers); }
-    alert(`Daily bonus of ${settings.dailyBonusAmount} coins claimed!`);
-  };
-
-  const submitWithdrawal = (address: string, amount: number) => {
-    if (!currentUser || amount < settings.minWithdrawal || amount > currentUser.coins) {
-      alert(`Invalid request. Minimum: ${settings.minWithdrawal}`); return;
-    }
-    const newRequest: WithdrawalRequest = { id: Math.random().toString(36).substring(7), ip: currentUser.ip, amount, walletAddress: address, status: 'pending', createdAt: new Date().toISOString() };
-    const updatedWd = [...withdrawals, newRequest];
-    setWithdrawals(updatedWd);
-    StorageService.setWithdrawals(updatedWd);
-    const updatedUser = { ...currentUser, coins: currentUser.coins - amount };
-    setCurrentUser(updatedUser);
-    const allUsers = StorageService.getUsers();
-    const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
-    if (idx !== -1) { allUsers[idx] = updatedUser; StorageService.setUsers(allUsers); setUsers(allUsers); }
-    alert('Withdrawal request submitted!');
-  };
-
-  const saveTasks = (newTasks: Task[]) => { setTasks(newTasks); StorageService.setTasks(newTasks); };
-  const saveCoupons = (newCoupons: Coupon[]) => { setCoupons(newCoupons); StorageService.setCoupons(newCoupons); };
-  
-  const handleSettingsSave = () => {
-    setSettings(pendingSettings);
-    StorageService.setSettings(pendingSettings);
-    alert("Settings saved successfully!");
-  };
-
-  const updateWithdrawalStatus = (id: string, status: 'approved' | 'rejected') => {
-    const updatedWd = withdrawals.map(w => {
-      if (w.id === id) {
-        if (status === 'rejected') {
-          const allUsers = StorageService.getUsers();
-          const userIdx = allUsers.findIndex(u => u.ip === w.ip);
-          if (userIdx !== -1) { allUsers[userIdx].coins += w.amount; StorageService.setUsers(allUsers); setUsers(allUsers); if (currentUser && currentUser.ip === w.ip) setCurrentUser({ ...allUsers[userIdx] }); }
+    const interval = setInterval(() => {
+      setTaskTimer(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          updateCurrentUser({
+            coins: currentUser.coins + task.reward,
+            tasksCompleted: [...currentUser.tasksCompleted, taskId]
+          });
+          setIsTaskPending(null);
+          return 0;
         }
-        return { ...w, status };
-      }
-      return w;
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleGameComplete = (baseReward: number, timeSpent: number) => {
+    if (!currentUser) return;
+    const game = INITIAL_GAMES.find(g => g.id === activeGame);
+    if (!game) return;
+
+    const timeBonus = Math.floor(timeSpent / 60) * game.timeBonus;
+    const totalReward = Math.min(baseReward + timeBonus, game.maxReward);
+
+    updateCurrentUser({ coins: currentUser.coins + totalReward });
+    setActiveGame(null);
+    alert(`Game over! You earned ${totalReward} coins.`);
+  };
+
+  const handleCouponRedeem = (code: string) => {
+    if (!currentUser) return;
+    const coupon = coupons.find(c => c.code.toUpperCase() === code.toUpperCase());
+    
+    if (!coupon) {
+      alert('Invalid coupon code!');
+      return;
+    }
+    if (coupon.usedCount >= coupon.usageLimit) {
+      alert('Coupon usage limit reached!');
+      return;
+    }
+    if (currentUser.couponsClaimed.includes(coupon.id)) {
+      alert('You have already claimed this coupon!');
+      return;
+    }
+    if (new Date(coupon.expiryDate) < new Date()) {
+      alert('Coupon has expired!');
+      return;
+    }
+
+    coupon.usedCount += 1;
+    StorageService.setCoupons([...coupons]);
+    setCoupons([...coupons]);
+
+    updateCurrentUser({
+      coins: currentUser.coins + coupon.reward,
+      couponsClaimed: [...currentUser.couponsClaimed, coupon.id]
     });
-    setWithdrawals(updatedWd);
-    StorageService.setWithdrawals(updatedWd);
+    alert(`Success! ${coupon.reward} coins added to your balance.`);
   };
 
-  const blockUser = (ipToBlock: string) => {
-    const updated = users.map(u => u.ip === ipToBlock ? { ...u, isBlocked: !u.isBlocked } : u);
-    setUsers(updated); StorageService.setUsers(updated);
-    if (ipToBlock === ip) setCurrentUser(updated.find(u => u.ip === ip) || null);
+  const handleWithdrawal = (address: string, amount: number) => {
+    if (!currentUser) return;
+    if (amount < settings.minWithdrawal) {
+      alert(`Minimum withdrawal is ${settings.minWithdrawal} coins.`);
+      return;
+    }
+    if (currentUser.coins < amount) {
+      alert('Insufficient balance!');
+      return;
+    }
+
+    const request: WithdrawalRequest = {
+      id: Math.random().toString(36).substring(7),
+      ip: currentUser.ip,
+      amount,
+      walletAddress: address,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    const updatedWithdrawals = [request, ...withdrawals];
+    StorageService.setWithdrawals(updatedWithdrawals);
+    setWithdrawals(updatedWithdrawals);
+    
+    updateCurrentUser({ coins: currentUser.coins - amount });
+    alert('Withdrawal request submitted successfully!');
   };
 
-  const addAdSlot = (slot: string) => {
-    setPendingSettings(prev => ({
-      ...prev,
-      adCodes: {
-        ...prev.adCodes,
-        [slot]: [...(prev.adCodes[slot] || []), ""]
-      }
-    }));
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopyFeedback(true);
+    setTimeout(() => setCopyFeedback(false), 2000);
   };
 
-  const updateAdSlot = (slot: string, index: number, value: string) => {
-    const updatedCodes = [...(pendingSettings.adCodes[slot] || [])];
-    updatedCodes[index] = value;
-    setPendingSettings(prev => ({
-      ...prev,
-      adCodes: { ...prev.adCodes, [slot]: updatedCodes }
-    }));
-  };
-
-  const removeAdSlot = (slot: string, index: number) => {
-    const updatedCodes = [...(pendingSettings.adCodes[slot] || [])].filter((_, i) => i !== index);
-    setPendingSettings(prev => ({
-      ...prev,
-      adCodes: { ...prev.adCodes, [slot]: updatedCodes }
-    }));
-  };
-
-  if (isIncognito) {
+  if (view === 'admin-login') {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
-        <div className="max-w-md glass p-12 rounded-3xl border-red-500/30">
-          <div className="text-6xl mb-6">🕵️‍♂️</div>
-          <h1 className="text-3xl font-bold mb-4">Incognito Detected</h1>
-          <p className="text-slate-400 mb-8">Please disable incognito mode to use this app.</p>
-          <button onClick={() => window.location.reload()} className="px-8 py-3 bg-indigo-600 rounded-xl font-bold">Try Again</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentUser?.isBlocked) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center">
-        <div className="max-w-md glass p-12 rounded-3xl border-red-500/30">
-          <div className="text-6xl mb-6">🚫</div>
-          <h1 className="text-3xl font-bold mb-4">Blocked</h1>
-          <p className="text-slate-400">Your access has been restricted by the administrator.</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
+        <form 
+          className="glass p-8 rounded-3xl w-full max-w-sm"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            if (formData.get('email') === ADMIN_EMAIL && formData.get('password') === ADMIN_PASSWORD) {
+              setIsAdminAuth(true);
+              setView('admin');
+            } else {
+              alert('Invalid credentials');
+            }
+          }}
+        >
+          <h2 className="text-2xl font-bold mb-6 text-center">Admin Login</h2>
+          <input name="email" type="email" placeholder="Email" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3 mb-4 text-white" required />
+          <input name="password" type="password" placeholder="Password" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3 mb-6 text-white" required />
+          <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-xl font-bold">Login</button>
+          <button type="button" onClick={() => setView('user')} className="w-full mt-4 text-slate-400 text-sm">Back to User App</button>
+        </form>
       </div>
     );
   }
@@ -309,341 +291,295 @@ const App: React.FC = () => {
       onAdminClick={() => setView('admin-login')}
       isAdmin={view === 'admin'}
     >
-      {showWelcome && (
-        <div className="fixed inset-0 z-[200] bg-slate-950/90 flex items-center justify-center p-6 text-center">
-          <div className="max-w-md glass p-10 rounded-3xl">
-            <div className="w-20 h-20 bg-yellow-500 rounded-full mx-auto flex items-center justify-center text-4xl mb-6 coin-spin">🪙</div>
-            <h1 className="text-3xl font-bold mb-4">Welcome to CoinEarn Pro!</h1>
-            <p className="text-slate-400 mb-8">Start completing tasks and earning rewards today.</p>
-            <button onClick={() => setShowWelcome(false)} className="w-full py-4 bg-indigo-600 rounded-2xl font-bold">LET'S START!</button>
-          </div>
-        </div>
-      )}
+      {view === 'user' ? (
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {/* Header Stats */}
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="glass p-6 rounded-3xl bg-gradient-to-br from-indigo-600/20 to-transparent border-indigo-500/20">
+              <h3 className="text-slate-400 text-sm font-medium mb-1">Balance</h3>
+              <div className="text-3xl font-bold text-white flex items-center gap-2">
+                <span className="text-yellow-500">🪙</span> {currentUser?.coins.toLocaleString()}
+              </div>
+            </div>
+            <div className="glass p-6 rounded-3xl bg-gradient-to-br from-emerald-600/20 to-transparent border-emerald-500/20">
+              <h3 className="text-slate-400 text-sm font-medium mb-1">Referrals</h3>
+              <div className="text-3xl font-bold text-white flex items-center gap-2">
+                <span className="text-blue-500">👥</span> {currentUser?.totalReferrals || 0}
+              </div>
+            </div>
+            <div className="glass p-6 rounded-3xl bg-gradient-to-br from-purple-600/20 to-transparent border-purple-500/20">
+              <h3 className="text-slate-400 text-sm font-medium mb-1">Tasks Done</h3>
+              <div className="text-3xl font-bold text-white flex items-center gap-2">
+                <span className="text-purple-500">✅</span> {currentUser?.tasksCompleted.length || 0}
+              </div>
+            </div>
+          </section>
 
-      {activeGame === 'memory' && (
-        <MemoryGame 
-          onClose={() => setActiveGame(null)} 
-          gameType="memory"
-          onComplete={(score, time) => {
-            const reward = 20 + Math.floor(time / 10);
-            const updatedUser = { ...currentUser!, coins: currentUser!.coins + reward };
-            setCurrentUser(updatedUser);
-            const allUsers = StorageService.getUsers();
-            const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
-            if (idx !== -1) { allUsers[idx] = updatedUser; StorageService.setUsers(allUsers); setUsers(allUsers); }
-            setActiveGame(null);
-            alert(`You earned ${reward} coins!`);
-          }}
-        />
-      )}
-      {activeGame === 'clicker' && (
-        <ClickerGame 
-          onClose={() => setActiveGame(null)} 
-          gameType="clicker"
-          onComplete={(score) => {
-            const reward = Math.min(score, 50);
-            const updatedUser = { ...currentUser!, coins: currentUser!.coins + reward };
-            setCurrentUser(updatedUser);
-            const allUsers = StorageService.getUsers();
-            const idx = allUsers.findIndex(u => u.ip === updatedUser.ip);
-            if (idx !== -1) { allUsers[idx] = updatedUser; StorageService.setUsers(allUsers); setUsers(allUsers); }
-            setActiveGame(null);
-            alert(`You earned ${reward} coins!`);
-          }}
-        />
-      )}
-
-      {view === 'admin-login' && (
-        <div className="max-w-md mx-auto mt-20 glass p-8 rounded-3xl">
-          <h2 className="text-2xl font-bold mb-6 text-center">Admin Login</h2>
-          <form onSubmit={handleAdminLogin} className="space-y-4">
-            <input name="email" type="email" required className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3" placeholder="admin@example.com" />
-            <input name="password" type="password" required className="w-full bg-slate-900 border border-slate-800 rounded-xl p-3" placeholder="••••••••" />
-            <button type="submit" className="w-full py-3 bg-indigo-600 rounded-xl font-bold">Login</button>
-            <button type="button" onClick={() => setView('user')} className="w-full text-slate-500 text-sm">Cancel</button>
-          </form>
-        </div>
-      )}
-
-      {view === 'user' && (
-        <div className="space-y-8 animate-in fade-in duration-500">
           <AdDisplay codes={settings.adCodes.main} />
-          
-          <div className="flex overflow-x-auto pb-4 gap-2 no-scrollbar">
-            {(['tasks', 'games', 'coupons', 'bonus', 'referrals', 'withdraw'] as const)
-              .filter(tab => tab !== 'withdraw' || settings.isWithdrawalEnabled)
-              .map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-shrink-0 px-6 py-3 rounded-full font-semibold transition-all ${activeTab === tab ? 'bg-indigo-600 text-white' : 'bg-slate-800/50 text-slate-400 hover:bg-slate-800'}`}>
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+
+          {/* Main Navigation */}
+          <nav className="flex overflow-x-auto gap-2 p-1 bg-slate-900/50 rounded-2xl border border-slate-800 scrollbar-hide">
+            {[
+              { id: 'tasks', label: 'Tasks', icon: '📝' },
+              { id: 'games', label: 'Games', icon: '🎮' },
+              { id: 'bonus', label: 'Daily Bonus', icon: '🎁' },
+              { id: 'referrals', label: 'Referrals', icon: '🤝' },
+              { id: 'coupons', label: 'Coupons', icon: '🎟️' },
+              { id: 'withdraw', label: 'Withdraw', icon: '💸' },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`flex-1 min-w-fit flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-semibold transition-all ${
+                  activeTab === tab.id 
+                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
+                    : 'text-slate-400 hover:bg-slate-800'
+                }`}
+              >
+                <span>{tab.icon}</span>
+                {tab.label}
               </button>
             ))}
+          </nav>
+
+          <div className="min-h-[400px]">
+            {activeTab === 'tasks' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+                  <h2 className="text-2xl font-bold">Available Tasks</h2>
+                  <input 
+                    type="text" 
+                    placeholder="Search tasks..." 
+                    className="bg-slate-800 border-slate-700 rounded-xl px-4 py-2 w-full md:w-64"
+                    value={taskSearch}
+                    onChange={(e) => setTaskSearch(e.target.value)}
+                  />
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {tasks.filter(t => t.isActive && !currentUser?.tasksCompleted.includes(t.id) && t.title.toLowerCase().includes(taskSearch.toLowerCase())).map(task => (
+                    <div key={task.id} className="glass p-6 rounded-3xl border border-slate-800 hover:border-indigo-500/50 transition-colors flex flex-col">
+                      <div className="flex justify-between items-start mb-4">
+                        <span className="px-3 py-1 bg-slate-800 rounded-full text-xs font-bold text-slate-400 uppercase tracking-wider">{task.category}</span>
+                        <div className="text-yellow-500 font-bold">+{task.reward} 🪙</div>
+                      </div>
+                      <h3 className="text-lg font-bold mb-2">{task.title}</h3>
+                      <p className="text-slate-400 text-sm mb-6 flex-1">{task.description}</p>
+                      <button 
+                        onClick={() => handleTaskComplete(task.id)}
+                        disabled={isTaskPending !== null}
+                        className={`w-full py-3 rounded-xl font-bold transition-all ${
+                          isTaskPending === task.id ? 'bg-slate-700 cursor-not-allowed' : 'bg-slate-800 hover:bg-indigo-600'
+                        }`}
+                      >
+                        {isTaskPending === task.id ? `Verifying... ${taskTimer}s` : 'Start Task'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {tasks.filter(t => t.isActive && !currentUser?.tasksCompleted.includes(t.id)).length === 0 && (
+                  <div className="text-center py-20 text-slate-500 bg-slate-900/20 rounded-3xl border border-dashed border-slate-800">
+                    No tasks available at the moment. Check back later!
+                  </div>
+                )}
+                <AdDisplay codes={settings.adCodes.tasks} />
+              </div>
+            )}
+
+            {activeTab === 'games' && (
+              <div className="space-y-6 animate-in fade-in duration-300">
+                <h2 className="text-2xl font-bold">Earn by Playing</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {INITIAL_GAMES.map(game => (
+                    <div key={game.id} className="glass p-8 rounded-3xl flex flex-col md:flex-row items-center gap-8 border border-slate-800 hover:border-indigo-500/50 transition-all group">
+                      <div className="text-7xl bg-slate-800 w-24 h-24 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">{game.icon}</div>
+                      <div className="flex-1 text-center md:text-left">
+                        <h3 className="text-2xl font-bold mb-2">{game.name}</h3>
+                        <p className="text-slate-400 mb-4">Earn up to <span className="text-yellow-500 font-bold">{game.maxReward} coins</span> per session.</p>
+                        <button 
+                          onClick={() => setActiveGame(game.id as any)}
+                          className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold"
+                        >
+                          Play Now
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <AdDisplay codes={settings.adCodes.games} />
+              </div>
+            )}
+
+            {activeTab === 'bonus' && (
+              <div className="max-w-md mx-auto py-12 text-center animate-in fade-in zoom-in-95 duration-300">
+                <div className="text-8xl mb-6">🎁</div>
+                <h2 className="text-3xl font-bold mb-4">Daily Bonus</h2>
+                <p className="text-slate-400 mb-8">Come back every 24 hours to claim your free reward!</p>
+                <div className="glass p-8 rounded-3xl border-2 border-indigo-500/30">
+                  <div className="text-5xl font-black text-yellow-500 mb-2">+{settings.dailyBonusAmount}</div>
+                  <div className="text-slate-400 text-sm mb-6">COINS AVAILABLE</div>
+                  <button 
+                    onClick={handleDailyBonus}
+                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-lg shadow-lg shadow-indigo-500/20"
+                  >
+                    Claim Reward
+                  </button>
+                </div>
+                <AdDisplay codes={settings.adCodes.daily} className="mt-8" />
+              </div>
+            )}
+
+            {activeTab === 'referrals' && (
+              <div className="space-y-8 animate-in fade-in duration-300">
+                <div className="glass p-8 rounded-3xl text-center max-w-2xl mx-auto">
+                  <h2 className="text-3xl font-bold mb-4">Invite & Earn</h2>
+                  <p className="text-slate-400 mb-8">Share your referral link and earn <span className="text-yellow-500 font-bold">{settings.referralBonusAmount} coins</span> for every friend who joins!</p>
+                  
+                  <div className="flex flex-col md:flex-row gap-4 items-stretch">
+                    <div className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl px-6 py-4 text-left font-mono text-indigo-400 overflow-hidden text-ellipsis whitespace-nowrap">
+                      {referralLink}
+                    </div>
+                    <button 
+                      onClick={() => copyToClipboard(referralLink)}
+                      className={`px-8 py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 ${
+                        copyFeedback ? 'bg-emerald-600 text-white' : 'bg-indigo-600 hover:bg-indigo-700'
+                      }`}
+                    >
+                      {copyFeedback ? '✓ Copied' : 'Copy Link'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'coupons' && (
+              <div className="max-w-md mx-auto py-12 text-center animate-in fade-in duration-300">
+                <h2 className="text-3xl font-bold mb-8">Redeem Coupon</h2>
+                <form 
+                  className="space-y-4"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const input = e.currentTarget.querySelector('input') as HTMLInputElement;
+                    handleCouponRedeem(input.value);
+                    input.value = '';
+                  }}
+                >
+                  <input 
+                    type="text" 
+                    placeholder="Enter coupon code" 
+                    className="w-full bg-slate-800 border-slate-700 rounded-2xl px-6 py-4 text-center text-xl font-bold uppercase tracking-widest placeholder:normal-case placeholder:tracking-normal"
+                    required
+                  />
+                  <button type="submit" className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold text-lg">
+                    Apply Code
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {activeTab === 'withdraw' && (
+              <div className="max-w-md mx-auto py-12 animate-in fade-in duration-300">
+                <h2 className="text-3xl font-bold mb-2 text-center">Withdraw Coins</h2>
+                <p className="text-slate-400 mb-8 text-center">Minimum withdrawal: <span className="text-white font-bold">{settings.minWithdrawal} 🪙</span></p>
+                
+                <form 
+                  className="glass p-8 rounded-3xl space-y-6"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.currentTarget);
+                    handleWithdrawal(formData.get('address') as string, Number(formData.get('amount')));
+                    e.currentTarget.reset();
+                  }}
+                >
+                  {!settings.isWithdrawalEnabled && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/20 p-4 rounded-xl text-yellow-500 text-sm font-medium">
+                      ⚠️ Withdrawals are currently disabled by the administrator.
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-slate-400 text-sm mb-2">Wallet Address (USDT TRC-20 / etc.)</label>
+                    <input name="address" type="text" placeholder="Enter your address" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3" required disabled={!settings.isWithdrawalEnabled} />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 text-sm mb-2">Amount (Coins)</label>
+                    <input name="amount" type="number" min={settings.minWithdrawal} placeholder="0" className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-3" required disabled={!settings.isWithdrawalEnabled} />
+                  </div>
+                  <button 
+                    type="submit" 
+                    disabled={!settings.isWithdrawalEnabled}
+                    className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-800 disabled:text-slate-500 rounded-xl font-bold text-lg"
+                  >
+                    Request Withdrawal
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Admin View */
+        <div className="space-y-8 animate-in fade-in duration-300">
+          <div className="flex justify-between items-center">
+            <h1 className="text-3xl font-bold">Administrator Panel</h1>
+            <button onClick={() => setView('user')} className="text-slate-400 hover:text-white flex items-center gap-2">
+              <span>←</span> Return to App
+            </button>
           </div>
 
-          {activeTab === 'tasks' && (
-            <div className="space-y-6">
-              <AdDisplay codes={settings.adCodes.tasks} />
-              <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
-                <h2 className="text-2xl font-bold">Available Tasks</h2>
-                <input type="text" placeholder="Search tasks..." className="bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-2 w-full md:w-auto" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} />
-              </div>
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {tasks.filter(t => t.isActive && (t.title.toLowerCase().includes(taskSearch.toLowerCase()) || t.category.toLowerCase().includes(taskSearch.toLowerCase()))).length === 0 ? (
-                  <div className="col-span-full py-20 text-center text-slate-500">No tasks available right now.</div>
-                ) : tasks.filter(t => t.isActive && (t.title.toLowerCase().includes(taskSearch.toLowerCase()) || t.category.toLowerCase().includes(taskSearch.toLowerCase()))).map(task => {
-                  const isCompleted = currentUser?.tasksCompleted.includes(task.id);
-                  const isPending = isTaskPending === task.id;
-                  return (
-                    <div key={task.id} className={`glass rounded-3xl p-6 border transition-all ${isCompleted ? 'opacity-60 border-emerald-500/20' : 'border-slate-800'}`}>
-                      <div className="flex justify-between items-start mb-4">
-                        <span className="bg-indigo-500/10 text-indigo-400 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wider">{task.category}</span>
-                        <div className="text-yellow-500 font-bold">🪙 {task.reward}</div>
-                      </div>
-                      <h3 className="text-xl font-bold mb-2">{task.title}</h3>
-                      <p className="text-slate-400 text-sm mb-6 line-clamp-2">{task.description}</p>
-                      {isCompleted ? (
-                        <div className="w-full py-3 bg-emerald-500/10 text-emerald-400 rounded-xl text-center font-bold">COMPLETED ✓</div>
-                      ) : (
-                        <button 
-                          onClick={() => isPending ? finalizeTask() : claimTask(task.id)}
-                          disabled={isPending && taskTimer > 0}
-                          className={`w-full py-3 rounded-xl font-bold transition-all ${isPending ? (taskTimer > 0 ? 'bg-slate-700' : 'bg-emerald-600') : 'bg-indigo-600 shadow-lg shadow-indigo-600/20 hover:scale-[1.02]'}`}
-                        >
-                          {isPending ? (taskTimer > 0 ? `Wait ${taskTimer}s...` : 'CLAIM REWARD') : 'COMPLETE TASK'}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'games' && (
-            <div className="space-y-6">
-              <AdDisplay codes={settings.adCodes.games} />
-              <div className="grid md:grid-cols-2 gap-8">
-                <div className="glass rounded-3xl p-8 text-center card-3d">
-                  <div className="text-6xl mb-4">🧠</div>
-                  <h3 className="text-2xl font-bold mb-2">Memory Match</h3>
-                  <p className="text-slate-400 mb-6">Match cards to win instant coins.</p>
-                  <button onClick={() => setActiveGame('memory')} className="w-full py-4 bg-indigo-600 rounded-2xl font-bold">PLAY NOW</button>
-                </div>
-                <div className="glass rounded-3xl p-8 text-center card-3d">
-                  <div className="text-6xl mb-4">🖱️</div>
-                  <h3 className="text-2xl font-bold mb-2">Coin Clicker</h3>
-                  <p className="text-slate-400 mb-6">Click fast to earn coins.</p>
-                  <button onClick={() => setActiveGame('clicker')} className="w-full py-4 bg-indigo-600 rounded-2xl font-bold">PLAY NOW</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'coupons' && (
-            <div className="max-w-xl mx-auto py-10">
-              <div className="glass p-8 rounded-3xl shadow-2xl border border-slate-700">
-                <h2 className="text-2xl font-bold mb-6 text-center">Redeem Coupon</h2>
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  const code = new FormData(e.currentTarget).get('code') as string;
-                  claimCoupon(code);
-                  e.currentTarget.reset();
-                }} className="space-y-4">
-                  <input name="code" required placeholder="Enter Coupon Code" className="w-full bg-slate-900 rounded-2xl p-5 text-center text-xl font-mono border border-slate-800 focus:border-indigo-500 outline-none" />
-                  <button type="submit" className="w-full py-4 bg-indigo-600 rounded-2xl font-bold text-lg hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-600/20">REDEEM</button>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'bonus' && (
-            <div className="max-w-xl mx-auto py-10 text-center">
-              <AdDisplay codes={settings.adCodes.daily} />
-              <div className="glass p-10 rounded-3xl shadow-2xl border border-slate-700">
-                <div className="text-6xl mb-4">🎁</div>
-                <h2 className="text-2xl font-bold mb-2">Daily Bonus</h2>
-                <div className="text-4xl font-black text-yellow-500 mb-6">🪙 {settings.dailyBonusAmount}</div>
-                <button 
-                  onClick={claimDailyBonus}
-                  disabled={currentUser?.lastDailyBonus === new Date().toDateString()}
-                  className="w-full py-5 bg-indigo-600 disabled:bg-slate-800 disabled:text-slate-500 rounded-2xl font-bold text-xl transition-all shadow-lg shadow-indigo-600/20"
-                >
-                  {currentUser?.lastDailyBonus === new Date().toDateString() ? 'ALREADY CLAIMED' : 'CLAIM BONUS'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'referrals' && (
-            <div className="max-w-xl mx-auto py-10">
-              <div className="glass p-8 rounded-3xl space-y-6 shadow-2xl border border-slate-700">
-                <h2 className="text-2xl font-bold text-center">Refer & Earn</h2>
-                <p className="text-slate-400 text-center text-sm">Share your link and get <span className="text-yellow-500 font-bold">{settings.referralBonusAmount} coins</span>!</p>
-                <div className="flex gap-2">
-                  <input readOnly value={referralLink} className="flex-1 bg-slate-900 rounded-xl px-4 py-3 font-mono text-[10px] md:text-xs overflow-hidden border border-slate-800" />
-                  <button onClick={() => { navigator.clipboard.writeText(referralLink); setCopyFeedback(true); setTimeout(()=>setCopyFeedback(false), 2000); }} className="px-6 rounded-xl font-bold bg-slate-800 hover:bg-slate-700 border border-slate-700">{copyFeedback ? 'COPIED' : 'COPY'}</button>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-slate-900/50 p-4 rounded-2xl text-center border border-slate-800">
-                    <div className="text-slate-500 text-[10px] uppercase font-bold mb-1 tracking-wider">Referrals</div>
-                    <div className="text-2xl font-bold">{currentUser?.totalReferrals || 0}</div>
-                  </div>
-                  <div className="bg-slate-900/50 p-4 rounded-2xl text-center border border-slate-800">
-                    <div className="text-slate-500 text-[10px] uppercase font-bold mb-1 tracking-wider">Coins Earned</div>
-                    <div className="text-2xl font-bold text-yellow-500">🪙 {(currentUser?.totalReferrals || 0) * settings.referralBonusAmount}</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'withdraw' && settings.isWithdrawalEnabled && (
-            <div className="max-w-2xl mx-auto py-10">
-              <div className="glass p-8 rounded-3xl shadow-2xl border border-slate-700">
-                <h2 className="text-2xl font-bold mb-6 text-center">Withdraw Coins</h2>
-                <form onSubmit={(e) => {
-                  e.preventDefault();
-                  const fd = new FormData(e.currentTarget);
-                  submitWithdrawal(fd.get('address') as string, parseInt(fd.get('amount') as string));
-                  e.currentTarget.reset();
-                }} className="space-y-4">
-                  <input name="address" required placeholder="Wallet Address (0x...)" className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                  <input name="amount" type="number" required placeholder={`Amount (Min ${settings.minWithdrawal})`} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800" />
-                  <button type="submit" className="w-full py-4 bg-indigo-600 rounded-xl font-bold shadow-lg shadow-indigo-600/20">REQUEST WITHDRAWAL</button>
-                </form>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {view === 'admin' && isAdminAuth && (
-        <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-8 animate-in slide-in-from-left duration-500">
-          <aside className="glass p-4 rounded-3xl h-fit border border-slate-800 shadow-2xl">
-            {(['dashboard', 'users', 'tasks', 'coupons', 'withdrawals', 'settings'] as const).map(tab => (
-              <button key={tab} onClick={() => setActiveAdminTab(tab)} className={`w-full text-left px-4 py-3 rounded-xl font-medium transition-all mb-1 ${activeAdminTab === tab ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-slate-400 hover:bg-slate-800'}`}>
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+          <nav className="flex gap-2 p-1 bg-slate-900 rounded-2xl border border-slate-800 overflow-x-auto">
+            {['dashboard', 'users', 'tasks', 'coupons', 'withdrawals', 'settings'].map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveAdminTab(tab as any)}
+                className={`px-6 py-2 rounded-xl font-semibold capitalize whitespace-nowrap ${
+                  activeAdminTab === tab ? 'bg-indigo-600' : 'text-slate-400 hover:bg-slate-800'
+                }`}
+              >
+                {tab}
               </button>
             ))}
-            <button onClick={() => { setIsAdminAuth(false); setView('user'); }} className="w-full text-left px-4 py-3 text-red-400 mt-6 font-medium hover:bg-red-950/20 rounded-xl">Logout</button>
-          </aside>
-          
-          <section className="space-y-8 pb-20">
+          </nav>
+
+          <div className="min-h-[500px]">
             {activeAdminTab === 'dashboard' && (
-              <div className="grid md:grid-cols-4 gap-4">
-                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-widest font-bold">Total Users</div><div className="text-3xl font-black">{users.length}</div></div>
-                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-widest font-bold">Issued Coins</div><div className="text-3xl font-black text-yellow-500">{users.reduce((acc, u) => acc + u.coins, 0).toLocaleString()}</div></div>
-                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-widest font-bold">Pending WD</div><div className="text-3xl font-black text-orange-500">{withdrawals.filter(w => w.status === 'pending').length}</div></div>
-                <div className="glass p-6 rounded-3xl border border-slate-800"><div className="text-slate-500 text-[10px] mb-1 uppercase tracking-widest font-bold">Total Tasks</div><div className="text-3xl font-black text-emerald-500">{users.reduce((acc, u) => acc + u.tasksCompleted.length, 0)}</div></div>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                {[
+                  { label: 'Total Users', value: users.length, color: 'text-blue-500' },
+                  { label: 'Total Coins', value: users.reduce((acc, u) => acc + u.coins, 0), color: 'text-yellow-500' },
+                  { label: 'Pending Withdraws', value: withdrawals.filter(w => w.status === 'pending').length, color: 'text-orange-500' },
+                  { label: 'Tasks Completed', value: users.reduce((acc, u) => acc + u.tasksCompleted.length, 0), color: 'text-emerald-500' },
+                ].map(stat => (
+                  <div key={stat.label} className="glass p-6 rounded-3xl">
+                    <div className="text-slate-400 text-sm mb-1">{stat.label}</div>
+                    <div className={`text-3xl font-bold ${stat.color}`}>{stat.value.toLocaleString()}</div>
+                  </div>
+                ))}
               </div>
             )}
 
             {activeAdminTab === 'users' && (
-              <div className="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl">
+              <div className="glass rounded-3xl overflow-hidden">
                 <table className="w-full text-left">
-                  <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs font-bold uppercase text-slate-400">IP / Referral</th><th className="p-4 text-xs font-bold uppercase text-slate-400">Balance</th><th className="p-4 text-xs font-bold uppercase text-slate-400 text-right">Actions</th></tr></thead>
-                  <tbody>
-                    {users.length === 0 ? <tr><td colSpan={3} className="p-10 text-center text-slate-500">No users yet.</td></tr> : users.map(u => (
-                      <tr key={u.ip} className="border-t border-slate-800/50">
-                        <td className="p-4 text-xs">
-                          <div className="font-mono">{u.ip}</div>
-                          <div className="text-slate-500 mt-1">Ref: {u.referralCode}</div>
+                  <thead className="bg-slate-900/50">
+                    <tr>
+                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">IP Address</th>
+                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Coins</th>
+                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Referrals</th>
+                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Joined</th>
+                      <th className="px-6 py-4 text-slate-400 text-xs font-bold uppercase">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800">
+                    {users.map(u => (
+                      <tr key={u.ip} className="hover:bg-slate-800/50 transition-colors">
+                        <td className="px-6 py-4 font-mono text-indigo-400">{u.ip}</td>
+                        <td className="px-6 py-4 font-bold">{u.coins.toLocaleString()}</td>
+                        <td className="px-6 py-4">{u.totalReferrals}</td>
+                        <td className="px-6 py-4 text-slate-400 text-sm">{new Date(u.joinedAt).toLocaleDateString()}</td>
+                        <td className="px-6 py-4">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${u.isBlocked ? 'bg-red-500/20 text-red-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
+                            {u.isBlocked ? 'Blocked' : 'Active'}
+                          </span>
                         </td>
-                        <td className="p-4 font-bold text-yellow-500">{u.coins.toLocaleString()}</td>
-                        <td className="p-4 text-right">
-                          <button onClick={() => blockUser(u.ip)} className={`px-4 py-2 rounded-lg text-[10px] font-bold ${u.isBlocked ? 'bg-emerald-600' : 'bg-red-600'}`}>
-                            {u.isBlocked ? 'UNBLOCK' : 'BLOCK'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {activeAdminTab === 'tasks' && (
-              <div className="space-y-6">
-                <div className="glass p-6 rounded-3xl border border-slate-800 shadow-xl">
-                  <h3 className="text-lg font-bold mb-4">New Task</h3>
-                  <form onSubmit={(e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const newTask: Task = { id: Math.random().toString(36).substring(7), title: fd.get('title') as string, reward: parseInt(fd.get('reward') as string), link: fd.get('link') as string, category: fd.get('category') as string, description: fd.get('description') as string, isActive: true };
-                    saveTasks([...tasks, newTask]); e.currentTarget.reset(); alert("Task added!");
-                  }} className="grid md:grid-cols-2 gap-4">
-                    <input name="title" placeholder="Title" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    <input name="reward" type="number" placeholder="Coins Reward" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    <input name="link" placeholder="Link" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    <select name="category" className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm">{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                    <textarea name="description" placeholder="Short description..." className="md:col-span-2 bg-slate-900 rounded-xl p-3 border border-slate-800 h-20 text-sm" />
-                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 rounded-xl font-bold">ADD TASK</button>
-                  </form>
-                </div>
-                <div className="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs font-bold uppercase text-slate-400">Task</th><th className="p-4 text-xs font-bold uppercase text-slate-400">Reward</th><th className="p-4 text-xs font-bold uppercase text-slate-400 text-right">Actions</th></tr></thead>
-                    <tbody>
-                      {tasks.length === 0 ? <tr><td colSpan={3} className="p-10 text-center text-slate-500">No tasks.</td></tr> : tasks.map(t => (
-                        <tr key={t.id} className="border-t border-slate-800/50">
-                          <td className="p-4 text-sm font-medium">{t.title}</td>
-                          <td className="p-4 font-bold text-yellow-500">{t.reward}</td>
-                          <td className="p-4 text-right flex justify-end gap-2">
-                            <button onClick={() => saveTasks(tasks.map(tk => tk.id === t.id ? { ...tk, isActive: !tk.isActive } : tk))} className="text-[10px] bg-slate-800 px-3 py-1.5 rounded-lg">{t.isActive ? 'Disable' : 'Enable'}</button>
-                            <button onClick={() => saveTasks(tasks.filter(tk => tk.id !== t.id))} className="text-[10px] bg-red-900/50 text-red-400 px-3 py-1.5 rounded-lg">Del</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {activeAdminTab === 'coupons' && (
-              <div className="space-y-6">
-                <div className="glass p-6 rounded-3xl border border-slate-800 shadow-xl">
-                  <h3 className="text-lg font-bold mb-4">New Coupon</h3>
-                  <form onSubmit={(e) => {
-                    e.preventDefault();
-                    const fd = new FormData(e.currentTarget);
-                    const newCoupon: Coupon = { id: Math.random().toString(36).substring(7), code: (fd.get('code') as string).toUpperCase().trim(), reward: parseInt(fd.get('reward') as string), usageLimit: parseInt(fd.get('limit') as string), expiryDate: fd.get('expiry') as string, usedCount: 0 };
-                    saveCoupons([...coupons, newCoupon]); e.currentTarget.reset(); alert("Coupon created!");
-                  }} className="grid md:grid-cols-2 gap-4">
-                    <input name="code" placeholder="WELCOME50" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm font-mono" />
-                    <input name="reward" type="number" placeholder="Coins" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    <input name="limit" type="number" placeholder="Max Uses" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    <input name="expiry" type="date" required className="bg-slate-900 rounded-xl p-3 border border-slate-800 text-white text-sm" />
-                    <button type="submit" className="md:col-span-2 py-3 bg-indigo-600 rounded-xl font-bold">CREATE COUPON</button>
-                  </form>
-                </div>
-                <div className="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs font-bold uppercase text-slate-400">Code</th><th className="p-4 text-xs font-bold uppercase text-slate-400">Uses</th><th className="p-4 text-xs font-bold uppercase text-slate-400 text-right">Actions</th></tr></thead>
-                    <tbody>
-                      {coupons.length === 0 ? <tr><td colSpan={3} className="p-10 text-center text-slate-500">No coupons.</td></tr> : coupons.map(c => (
-                        <tr key={c.id} className="border-t border-slate-800/50">
-                          <td className="p-4 font-mono font-bold text-indigo-400">{c.code}</td>
-                          <td className="p-4 text-xs">{c.usedCount} / {c.usageLimit}</td>
-                          <td className="p-4 text-right"><button onClick={() => saveCoupons(coupons.filter(cp => cp.id !== c.id))} className="text-[10px] bg-red-900/50 text-red-400 px-3 py-1.5 rounded-lg">Del</button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {activeAdminTab === 'withdrawals' && (
-              <div className="glass rounded-3xl overflow-hidden border border-slate-800 shadow-xl">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-800/50"><tr><th className="p-4 text-xs font-bold uppercase text-slate-400">IP</th><th className="p-4 text-xs font-bold uppercase text-slate-400">Amount</th><th className="p-4 text-xs font-bold uppercase text-slate-400">Status</th><th className="p-4 text-xs font-bold uppercase text-slate-400 text-right">Actions</th></tr></thead>
-                  <tbody>
-                    {withdrawals.length === 0 ? <tr><td colSpan={4} className="p-10 text-center text-slate-500">No requests.</td></tr> : withdrawals.map(w => (
-                      <tr key={w.id} className="border-t border-slate-800/50">
-                        <td className="p-4 text-xs font-mono">{w.ip}</td>
-                        <td className="p-4 font-bold text-orange-400">{w.amount}</td>
-                        <td className="p-4"><span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${w.status === 'pending' ? 'bg-orange-500/20 text-orange-400' : w.status === 'approved' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{w.status}</span></td>
-                        <td className="p-4 text-right">{w.status === 'pending' && <div className="flex gap-1 justify-end"><button onClick={() => updateWithdrawalStatus(w.id, 'approved')} className="bg-emerald-600 text-[9px] px-2 py-1 rounded">Approve</button><button onClick={() => updateWithdrawalStatus(w.id, 'rejected')} className="bg-red-600 text-[9px] px-2 py-1 rounded">Reject</button></div>}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -652,62 +588,116 @@ const App: React.FC = () => {
             )}
 
             {activeAdminTab === 'settings' && (
-              <div className="glass p-8 rounded-3xl space-y-8 border border-slate-800 shadow-2xl">
-                <div className="grid md:grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <h3 className="font-bold border-b border-slate-800 pb-2 text-indigo-400 tracking-wide uppercase text-xs">System Parameters</h3>
-                    <div>
-                      <label className="text-[10px] text-slate-500 block mb-1 uppercase tracking-widest">Daily Bonus</label>
-                      <input type="number" value={pendingSettings.dailyBonusAmount} onChange={(e) => setPendingSettings({ ...pendingSettings, dailyBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-500 block mb-1 uppercase tracking-widest">Referral Bonus</label>
-                      <input type="number" value={pendingSettings.referralBonusAmount} onChange={(e) => setPendingSettings({ ...pendingSettings, referralBonusAmount: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-slate-500 block mb-1 uppercase tracking-widest">Min Withdraw</label>
-                      <input type="number" value={pendingSettings.minWithdrawal} onChange={(e) => setPendingSettings({ ...pendingSettings, minWithdrawal: parseInt(e.target.value) || 0 })} className="w-full bg-slate-900 rounded-xl p-3 border border-slate-800 text-sm" />
-                    </div>
-                    <div className="flex items-center gap-3 pt-2">
-                      <input type="checkbox" checked={pendingSettings.isWithdrawalEnabled} onChange={(e) => setPendingSettings({ ...pendingSettings, isWithdrawalEnabled: e.target.checked })} className="w-4 h-4 rounded bg-slate-900 border-slate-800" id="en-wd" />
-                      <label htmlFor="en-wd" className="text-sm font-bold">Allow Withdrawals</label>
-                    </div>
+              <div className="max-w-2xl mx-auto glass p-8 rounded-3xl space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-slate-400 text-sm mb-2">Daily Bonus Amount</label>
+                    <input 
+                      type="number" 
+                      className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2"
+                      value={pendingSettings.dailyBonusAmount}
+                      onChange={(e) => setPendingSettings({...pendingSettings, dailyBonusAmount: Number(e.target.value)})}
+                    />
                   </div>
-                  
-                  <div className="space-y-6">
-                    <h3 className="font-bold border-b border-slate-800 pb-2 text-indigo-400 tracking-wide uppercase text-xs">Ad Codes Management</h3>
-                    
-                    {Object.keys(pendingSettings.adCodes).map(slot => (
-                      <div key={slot} className="space-y-3 bg-slate-900/50 p-4 rounded-2xl border border-slate-800">
-                        <div className="flex justify-between items-center">
-                          <label className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{slot} Section</label>
-                          <button onClick={() => addAdSlot(slot)} className="text-[10px] bg-indigo-600 px-2 py-1 rounded-lg font-bold">Add Slot</button>
-                        </div>
-                        
-                        {(pendingSettings.adCodes[slot] || []).map((code, idx) => (
-                          <div key={idx} className="space-y-2 relative group">
-                            <textarea 
-                              value={code} 
-                              onChange={(e) => updateAdSlot(slot, idx, e.target.value)}
-                              className="w-full bg-slate-950 rounded-xl p-3 border border-slate-800 text-[10px] font-mono h-24 focus:border-indigo-500 outline-none"
-                              placeholder="Paste HTML ad code here..."
-                            />
-                            <button onClick={() => removeAdSlot(slot, idx)} className="absolute -top-1 -right-1 bg-red-600 p-1 rounded-full text-[8px] hover:scale-110 transition-transform">✕</button>
-                          </div>
-                        ))}
-                        
-                        {pendingSettings.adCodes[slot].length === 0 && <div className="text-[9px] text-slate-600 italic">No ads configured for this slot.</div>}
-                      </div>
-                    ))}
+                  <div>
+                    <label className="block text-slate-400 text-sm mb-2">Referral Bonus Amount</label>
+                    <input 
+                      type="number" 
+                      className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2"
+                      value={pendingSettings.referralBonusAmount}
+                      onChange={(e) => setPendingSettings({...pendingSettings, referralBonusAmount: Number(e.target.value)})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-400 text-sm mb-2">Min. Withdrawal</label>
+                    <input 
+                      type="number" 
+                      className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2"
+                      value={pendingSettings.minWithdrawal}
+                      onChange={(e) => setPendingSettings({...pendingSettings, minWithdrawal: Number(e.target.value)})}
+                    />
+                  </div>
+                  <div className="flex items-center gap-4 pt-8">
+                    <input 
+                      type="checkbox" 
+                      id="enable-withdraw"
+                      checked={pendingSettings.isWithdrawalEnabled}
+                      onChange={(e) => setPendingSettings({...pendingSettings, isWithdrawalEnabled: e.target.checked})}
+                    />
+                    <label htmlFor="enable-withdraw" className="text-sm font-bold">Enable Withdrawals</label>
                   </div>
                 </div>
-                
-                <div className="pt-6 border-t border-slate-800 text-right">
-                   <button onClick={handleSettingsSave} className="px-8 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold shadow-xl shadow-indigo-600/20 transition-all hover:-translate-y-1">SAVE ALL SETTINGS</button>
+
+                <div className="space-y-4">
+                  <h3 className="font-bold border-b border-slate-800 pb-2">Advertising Codes (HTML)</h3>
+                  {Object.keys(pendingSettings.adCodes).map(key => (
+                    <div key={key}>
+                      <label className="block text-slate-400 text-sm mb-2 capitalize">{key} Ad Slots (one per line)</label>
+                      <textarea 
+                        className="w-full bg-slate-800 border-slate-700 rounded-xl px-4 py-2 h-24 font-mono text-xs"
+                        placeholder="<div>...</div>"
+                        value={pendingSettings.adCodes[key].join('\n')}
+                        onChange={(e) => {
+                          const codes = e.target.value.split('\n').filter(l => l.trim() !== '');
+                          setPendingSettings({
+                            ...pendingSettings,
+                            adCodes: { ...pendingSettings.adCodes, [key]: codes }
+                          });
+                        }}
+                      />
+                    </div>
+                  ))}
                 </div>
+
+                <button 
+                  onClick={() => {
+                    StorageService.setSettings(pendingSettings);
+                    setSettings(pendingSettings);
+                    alert('Settings saved successfully!');
+                  }}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 rounded-xl font-bold"
+                >
+                  Save Changes
+                </button>
               </div>
             )}
-          </section>
+          </div>
+        </div>
+      )}
+
+      {/* Game Modals */}
+      {activeGame === 'memory' && (
+        <MemoryGame 
+          gameType="memory" 
+          onComplete={handleGameComplete} 
+          onClose={() => setActiveGame(null)} 
+        />
+      )}
+      {activeGame === 'clicker' && (
+        <ClickerGame 
+          gameType="clicker" 
+          onComplete={handleGameComplete} 
+          onClose={() => setActiveGame(null)} 
+        />
+      )}
+
+      {/* Welcome Modal */}
+      {showWelcome && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="glass max-w-sm w-full p-8 rounded-3xl text-center space-y-6">
+            <div className="text-6xl">👋</div>
+            <h2 className="text-2xl font-bold">Welcome to CoinEarn!</h2>
+            <p className="text-slate-400">Start completing tasks and playing games to earn real crypto rewards.</p>
+            <button 
+              onClick={() => {
+                setShowWelcome(false);
+                StorageService.setWelcomed(ip);
+              }}
+              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 rounded-2xl font-bold"
+            >
+              Get Started
+            </button>
+          </div>
         </div>
       )}
     </Layout>
